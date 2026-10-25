@@ -5,12 +5,12 @@
 **凡人修仙传 · 韩立 · 大庚剑阵 | 手势操控 3D 飞剑模拟器**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.0.0-emerald)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-7.0.0-emerald)](CHANGELOG.md)
 [![Built with](https://img.shields.io/badge/Built%20with-React%2019-%2361DAFB?logo=react)](https://react.dev)
 [![Three.js](https://img.shields.io/badge/Three.js-0.160-black?logo=three.js)](https://threejs.org)
 [![Vite](https://img.shields.io/badge/Vite-6.2-%23646CFF?logo=vite)](https://vitejs.dev)
 [![MediaPipe](https://img.shields.io/badge/MediaPipe-Hands-blue)](https://ai.google.dev/edge/mediapipe)
-[![GitHub stars](https://img.shields.io/github/stars/HanGu007/sword-array-3d?style=social)](https://github.com/HanGu007/sword-array-3d)
+[![GitHub stars](https://img.shields.io/github/stars/Brando-2077/sword-array-3d?style=social)](https://github.com/Brando-2077/sword-array-3d)
 
 </div>
 
@@ -142,7 +142,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/HanGu007/sword-array-3d.git
+git clone https://github.com/Brando-2077/sword-array-3d.git
 cd sword-array-3d
 
 # 2. 安装依赖
@@ -239,7 +239,7 @@ A: 左手控**数量/速度/锁定**，右手控**招式/大小/位置**。手�
 欢迎贡献！请阅读 [CHANGELOG.md](./CHANGELOG.md) 了解最近的变更。
 
 ### 贡献者
-- [@HanGu](https://github.com/HanGu007) - 初始开发 + v2.0 重置
+- [@Brando-2077](https://github.com/Brando-2077)（HanGu） - 初始开发 + v2.0 重置
 
 ---
 

@@ -17,15 +17,15 @@
   "license": "MIT",
   "author": {
     "name": "HanGu",
-    "url": "https://github.com/HanGu007"
+    "url": "https://github.com/Brando-2077"
   },
-  "homepage": "https://github.com/HanGu007/sword-array-3d#readme",
+  "homepage": "https://github.com/Brando-2077/sword-array-3d#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/HanGu007/sword-array-3d.git"
+    "url": "https://github.com/Brando-2077/sword-array-3d.git"
   },
   "bugs": {
-    "url": "https://github.com/HanGu007/sword-array-3d/issues"
+    "url": "https://github.com/Brando-2077/sword-array-3d/issues"
   },
   "scripts": {
     "dev": "vite",
