@@ -42,8 +42,8 @@ const MAX_SWORDS   = 3600;      // 万剑剑丝（原著剑影分光之极）
 const BOIDS_MAX    = 512;       // Boids 群体智能上限（O(n²)，超限转参数化游弋）
 const WORLD_W      = 2800;
 const WORLD_H      = 2000;
-const BLOOM_BASE   = 1.15;      // v1.0 浓辉光回归
-const BLOOM_PULSE  = 0.15;
+const BLOOM_BASE   = 0.85;      // v1.0 手感：只让高亮核心泛光，集群不糊成灯泡
+const BLOOM_PULSE  = 0.12;
 const STAR_COUNT   = 1600;
 const TAU          = Math.PI * 2;
 const GOLDEN       = 2.39996323;
@@ -127,10 +127,10 @@ const swordFragmentShader = /* glsl */ `
   }
 
   void main() {
-    // 色板：v1.0 青竹蜂云剑，整体提亮（视觉优先：宁过勿暗）
+    // 色板：v1.0 青竹蜂云剑（提亮适度——加法混合下多剑叠加会自增亮，宁欠勿过）
     vec3 jadeCore  = uColA;
-    vec3 jadeMid   = mix(uColA, uColB, 0.65) * 1.35;
-    vec3 jadeGlow  = uColB * 1.25;
+    vec3 jadeMid   = mix(uColA, uColB, 0.65) * 1.10;
+    vec3 jadeGlow  = uColB * 1.05;
     vec3 goldAccent = vec3(1.0, 0.72, 0.15);
     vec3 goldEdge  = vec3(1.0, 0.85, 0.25);
 
@@ -182,10 +182,10 @@ const swordFragmentShader = /* glsl */ `
       baseColor = mix(baseColor, goldAccent * 1.3, wrapPattern * smoothstep(-6.0, -1.0, vHeight) * 0.3);
     }
 
-    // ── 菲涅尔描金 + 速度辉光（加强：辉光是剑的"宽度"） ──
-    vec3 rim = goldEdge * 2.4 * vFresnel;
+    // ── 菲涅尔描金 + 速度辉光 ──
+    vec3 rim = goldEdge * 1.9 * vFresnel;
     float speedGlow = clamp(vVel, 0.0, 50.0) / 50.0;
-    rim += goldAccent * speedGlow * 0.4;
+    rim += goldAccent * speedGlow * 0.35;
     vec3 finalColor = baseColor + rim;
 
     if (isTip) finalColor += goldAccent * (1.0 + sin(uTime * 15.0 + vSeed * 6.28) * 0.5) * 0.4;
@@ -270,8 +270,8 @@ function createTrailParticles(maxSwords: number): {
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
   const mat = new THREE.PointsMaterial({
-    size: 8.0, vertexColors: true,
-    blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.75,
+    size: 6.5, vertexColors: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.6,
   });
   const points = new THREE.Points(geo, mat);
   points.frustumCulled = false;
@@ -377,12 +377,12 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.35;
+    renderer.toneMappingExposure = 1.12;
     container.appendChild(renderer.domElement);
 
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 1.3, 0.6, 0.35);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), BLOOM_BASE, 0.45, 0.78);
     composer.addPass(bloomPass);
 
     // ── 星穹背景 + 星空 ──
@@ -551,26 +551,31 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
               break;
             }
             const NUM_CLUSTERS = 5;
+            const k = p.swordScale / 15; // 集群域随剑体缩放：剑大簇大，重叠才不爆
             const per = Math.ceil(liveCount / NUM_CLUSTERS);
             const cIdx = Math.floor(i / per);
             const cAng = time * 0.22 + cIdx * Math.PI * 1.3;
-            // 紧凑集群域：剑群填满画面中心，不留大片黑空
-            const cRadX = 400 + Math.sin(time * 0.35 + cIdx * 0.7) * 240;
-            const cRadY = 260 + Math.cos(time * 0.4 + cIdx * 1.1) * 150;
-            const cZ = Math.cos(time * 0.25 + cIdx * 1.5) * 300 - 300;
+            const cRadX = (350 + p.swordScale * 18) + Math.sin(time * 0.35 + cIdx * 0.7) * 240 * k;
+            const cRadY = (220 + p.swordScale * 11) + Math.cos(time * 0.4 + cIdx * 1.1) * 150 * k;
+            const cZ = Math.cos(time * 0.25 + cIdx * 1.5) * (150 + p.swordScale * 10) - 300;
             const center = boidGet().set(Math.cos(cAng) * cRadX, Math.sin(cAng) * cRadY, cZ);
+            // 个人轨道偏移：每剑在簇心周围分配固定壳层位置，结构性防扎堆
+            const spread = (110 + p.swordScale * 8) * (0.35 + 0.65 * fract(seed * 2.3));
+            fibDir(i % Math.max(1, per), Math.max(1, per), fibTmp);
+            center.x += fibTmp.x * spread; center.y += fibTmp.y * spread; center.z += fibTmp.z * spread * 0.7;
 
             const sep = boidGet(), ali = boidGet(), coh = boidGet();
             let nSep = 0, nAli = 0, nCoh = 0;
             const s0 = cIdx * per, e0 = Math.min(s0 + per, liveCount);
+            const sepR = 160 * Math.max(1, k * 0.8), aliR = 350 * k, cohR = 650 * k;
             for (let j = s0; j < e0; j++) {
               if (j === i) continue;
               const o = particles[j];
               const dx = pt.pos.x - o.pos.x, dy = pt.pos.y - o.pos.y, dz = pt.pos.z - o.pos.z;
               const d = Math.sqrt(dx*dx + dy*dy + dz*dz) + 0.001;
-              if (d < 160) { const w = 1/(d*d); sep.x += dx*w*800; sep.y += dy*w*800; sep.z += dz*w*800; nSep++; }
-              if (d < 350) { ali.x += o.vel.x; ali.y += o.vel.y; ali.z += o.vel.z; nAli++; }
-              if (d < 650) { coh.x += o.pos.x; coh.y += o.pos.y; coh.z += o.pos.z; nCoh++; }
+              if (d < sepR) { const w = 1/(d*d); sep.x += dx*w*800; sep.y += dy*w*800; sep.z += dz*w*800; nSep++; }
+              if (d < aliR) { ali.x += o.vel.x; ali.y += o.vel.y; ali.z += o.vel.z; nAli++; }
+              if (d < cohR) { coh.x += o.pos.x; coh.y += o.pos.y; coh.z += o.pos.z; nCoh++; }
             }
             const force = boidGet();
             if (nSep > 0) force.add(sep.multiplyScalar(1.8));
@@ -578,9 +583,10 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
             if (nCoh > 0) { coh.divideScalar(nCoh); force.add(t1.copy(coh).sub(pt.pos).multiplyScalar(0.03)); }
             const toC = t1.copy(center).sub(pt.pos);
             force.add(t2.copy(toC).normalize().multiplyScalar(Math.min(toC.length() * 0.035, 95)));
-            if (Math.abs(pt.pos.x) > 1250) force.x -= Math.sign(pt.pos.x) * 70;
-            if (Math.abs(pt.pos.y) > 950) force.y -= Math.sign(pt.pos.y) * 70;
-            if (Math.abs(pt.pos.z) > 850) force.z -= Math.sign(pt.pos.z) * 50;
+            const bx = 1050, by = 720, bz = 560; // 固定画面边界：剑心不出取景框
+            if (Math.abs(pt.pos.x) > bx) force.x -= Math.sign(pt.pos.x) * 90;
+            if (Math.abs(pt.pos.y) > by) force.y -= Math.sign(pt.pos.y) * 90;
+            if (Math.abs(pt.pos.z) > bz) force.z -= Math.sign(pt.pos.z) * 60;
             if (force.lengthSq() > 8100) force.normalize().multiplyScalar(90);
             pt.acc.copy(force);
             boidPut(sep); boidPut(ali); boidPut(coh); boidPut(force); boidPut(center);
@@ -760,8 +766,9 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
         attrVel.setXYZ(i, pt.vel.x, pt.vel.y, pt.vel.z);
 
         // 虚实透明度平滑过渡
-        // 群体亮度自适应：剑越多单剑越淡（总量守恒，3600 剑也不白屏）
-        targetAlpha *= Math.min(1, BOIDS_MAX / liveCount);
+        // 密度亮度补偿：加法混合下剑越多/越大叠加越白——单剑亮度按数量与
+        // 剑体大小双重衰减，保证集群中心也能看清剑身轮廓
+        targetAlpha *= Math.max(0.26, Math.min(1, 40 / liveCount)) * Math.max(0.55, Math.min(1, 15 / p.swordScale));
         alphaArr[i] += (targetAlpha - alphaArr[i]) * 0.1;
 
         swordPosBuf[i*3] = pt.pos.x; swordPosBuf[i*3+1] = pt.pos.y; swordPosBuf[i*3+2] = pt.pos.z;
