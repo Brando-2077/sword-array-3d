@@ -5,14 +5,15 @@
  *   渲染架构沿用 v3.0：辉光剑影 billboard（512 剑满帧、屏幕空间朝向、
  *   速度拉伸流光、星穹背景、Bloom 自适应）。
  *
- *   七式招数（v4.0，均有动漫出处）：
+ *   七式招数（v4.1，均有动漫/原著出处，经九式竞演裁汰）：
  *   - IDLE 御剑巡空：群剑在大体积星域自由游弋（御剑飞行）
  *   - THOUSAND_SILK 千丝绞杀：金丝织茧缠敌，层层收紧（vs 阴罗宗四长老名场面）
  *   - SWORD_BEAM 青元剑芒：一线剑光流随手疾射（筑基期标志剑光）
  *   - SWORD_SHADOW 剑影分光术：一实四虚五道剑影扇面（飞剑分影名场面）
  *   - SWORD_SHIELD 青元剑盾：剑光成栅结盾，微摆御敌（护体剑盾神通）
- *   - SWORD_SILK 剑丝流光：七条丝带缠绕流淌（剑光分化成丝）
+ *   - TONGTIAN_ARRAY 通天剑阵：紫金剑柱+剑雨+紫雷（仙界剑阵）
  *   - DAGENG_ARRAY 大庚剑阵：万剑齐发放射剑球（元婴至高神通）
+ *   竞演淘汰：剑丝流光、春黎剑阵（视觉不及上述七式）
  */
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
@@ -55,8 +56,8 @@ const FORMATION_COLORS: Record<FormationState, number[]> = {
   [FormationState.SWORD_BEAM]:    [0.03, 0.48, 0.20,  0.50, 1.00, 0.65],
   [FormationState.SWORD_SHADOW]:  [0.02, 0.40, 0.18,  0.35, 0.95, 0.60],
   [FormationState.SWORD_SHIELD]:  [0.02, 0.34, 0.22,  0.35, 0.95, 0.75],
-  [FormationState.SWORD_SILK]:    [0.10, 0.42, 0.14,  0.60, 1.00, 0.45],
   [FormationState.DAGENG_ARRAY]:  [0.12, 0.30, 0.08,  0.90, 0.95, 0.40],
+  [FormationState.TONGTIAN_ARRAY]: [0.12, 0.06, 0.28,  0.72, 0.55, 1.00],
 };
 
 // ─── 剑的屏幕空间朝向模式 ─────────────────────────
@@ -67,8 +68,8 @@ const FORMATION_ANGLE_MODE: Record<FormationState, AngleMode> = {
   [FormationState.SWORD_BEAM]:    AngleMode.FLOW,
   [FormationState.SWORD_SHADOW]:  AngleMode.RADIAL,
   [FormationState.SWORD_SHIELD]:  AngleMode.FIXED,
-  [FormationState.SWORD_SILK]:    AngleMode.VELOCITY,
   [FormationState.DAGENG_ARRAY]:  AngleMode.RADIAL,
+  [FormationState.TONGTIAN_ARRAY]: AngleMode.FIXED,
 };
 
 // ─── Shader：辉光剑影 billboard 顶点 ──────────────
@@ -536,21 +537,6 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
             );
             break;
           }
-          // 剑丝流光：剑光分化成丝，七条丝带缠绕流淌
-          case FormationState.SWORD_SILK: {
-            const lane = i % 7;
-            const t = fract(seed * 7.3 + time * (0.16 + lane * 0.012));
-            const ph = lane * (TAU / 7);
-            const rx = 620 + fract(seed * 3.1) * 160;
-            const ry = 300 + fract(seed * 4.7) * 110;
-            const rz = 170 + Math.sin(ph) * 60;
-            tmpVec2.set(
-              cx + Math.cos(t * TAU + ph) * rx,
-              cy + Math.sin(t * TAU * 2.0 + ph * 1.7) * ry,
-              cz + Math.sin(t * TAU + ph * 0.6) * rz,
-            );
-            break;
-          }
           // 大庚剑阵：万剑齐发，放射状中空剑球，切阵时从远方收拢
           case FormationState.DAGENG_ARRAY: {
             const converge = 1.0 + 1.6 * Math.exp(-formationTime * 2.6); // 切阵时从远处收拢
@@ -567,6 +553,38 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
               cy + fibTmp.y * R * shell * breathe,
               cz + fz * R * shell * breathe,
             );
+            break;
+          }
+          // 通天剑阵：紫金剑柱通天彻地 + 万道剑雨 + 紫雷沿柱穿梭
+          case FormationState.TONGTIAN_ARRAY: {
+            const pillarX = (p: number) => cx + (p - 2) * 340;
+            if (ratio < 0.62) {
+              // 剑柱：五根密集紫金光柱，悬停高频微颤
+              const p = Math.floor((ratio / 0.62) * 5);
+              tmpVec2.set(
+                pillarX(p) + Math.sin(time * 3.0 + seed * 40.0) * 6,
+                cy - 700 + fract(seed * 9.7) * 1400 + Math.sin(time * 4.0 + seed * 20.0) * 5,
+                cz + 120 + (fract(seed * 6.7) - 0.5) * 60,
+              );
+            } else if (ratio < 0.90) {
+              // 剑雨：沿柱位垂直落下，光轨拉满
+              const p = Math.floor(((ratio - 0.62) / 0.28) * 5);
+              const fall = fract(seed * 5.3 + time * (0.35 + fract(seed * 2.1) * 0.3));
+              tmpVec2.set(
+                pillarX(p) + Math.sin(time * 2.0 + seed * 30.0) * 12,
+                cy + 800 - fall * 1600,
+                cz + 120 + (fract(seed * 8.1) - 0.5) * 50,
+              );
+            } else {
+              // 紫雷：沿柱内高频窜动的竖向雷光（位置每 ~120ms 重随机，PD 冲刺天然成闪电）
+              const p = Math.floor(fract(seed * 4.3) * 5);
+              const bt = Math.floor(time * 8.0) + Math.floor(seed * 97.0);
+              tmpVec2.set(
+                pillarX(p) + (fract(bt * 0.123 + seed * 7.0) - 0.5) * 80,
+                cy + (fract(bt * 0.317 + seed * 3.0) - 0.5) * 1500,
+                cz + 180,
+              );
+            }
             break;
           }
           default:
@@ -627,7 +645,7 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
           const rdx = sx - centerNdc.x, rdy = sy - centerNdc.y;
           if (Math.hypot(rdx, rdy) > 0.002) targetAngle = Math.atan2(rdy, rdx); // 切向 = 径向 + 90°
         } else if (angleMode === AngleMode.FIXED) {
-          targetAngle = giantRot + Math.PI / 2;
+          targetAngle = giantRot; // 盾栅/剑柱：剑刃竖直（巨剑时代的 +PI/2 横躺已随巨剑术移除）
         } else if (angleMode === AngleMode.FLOW) {
           targetAngle = Math.atan2(tmpVec1.y, tmpVec1.x) + Math.PI / 2; // 剑刃沿剑河流向
         }

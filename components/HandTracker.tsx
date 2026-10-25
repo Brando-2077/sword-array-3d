@@ -391,7 +391,7 @@ function pickFormation(right: HandData): FormationState {
   if (c === 1) return FormationState.SWORD_BEAM;    // 1 指 → 青元剑芒
   if (c === 2) return FormationState.SWORD_SHADOW;  // 2 指 → 剑影分光术
   if (c === 3) return FormationState.SWORD_SHIELD;  // 3 指 → 青元剑盾
-  if (c === 4) return FormationState.SWORD_SILK;    // 4 指 → 剑丝流光
+  if (c === 4) return FormationState.TONGTIAN_ARRAY; // 4 指 → 通天剑阵
   return FormationState.DAGENG_ARRAY;               // 5 指 → 大庚剑阵
 }
 

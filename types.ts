@@ -24,7 +24,7 @@ export enum HandRole {
  *  - SWORD_BEAM    : 1 指 → 青元剑芒（筑基期标志剑光，一线剑光流）
  *  - SWORD_SHADOW  : 2 指 → 剑影分光术（飞剑分影名场面，一实多虚）
  *  - SWORD_SHIELD  : 3 指 → 青元剑盾（青元剑诀护体剑盾神通）
- *  - SWORD_SILK    : 4 指 → 剑丝流光（剑光分化成丝，丝带缠绕流淌）
+ *  - TONGTIAN_ARRAY: 4 指 → 通天剑阵（仙界剑阵：紫金剑柱+剑雨+紫电）
  *  - DAGENG_ARRAY  : 5 指 → 大庚剑阵（元婴至高神通，万剑齐发放射剑球）
  *  - IDLE          : 无手势/无右手 → 御剑巡空（御剑飞行，剑群自由游弋）
  */
@@ -34,8 +34,8 @@ export enum FormationState {
   SWORD_BEAM    = 'SWORD_BEAM',    // 青元剑芒（1 指）
   SWORD_SHADOW  = 'SWORD_SHADOW',  // 剑影分光术（2 指）
   SWORD_SHIELD  = 'SWORD_SHIELD',  // 青元剑盾（3 指）
-  SWORD_SILK    = 'SWORD_SILK',    // 剑丝流光（4 指）
   DAGENG_ARRAY  = 'DAGENG_ARRAY',  // 大庚剑阵（5 指）
+  TONGTIAN_ARRAY = 'TONGTIAN_ARRAY', // 通天剑阵（4 指，仙界：剑柱+剑雨+紫电）
 }
 
 // ─── 单手状态 ───────────────────────────────────────
@@ -147,15 +147,6 @@ export const FORMATION_META: Record<FormationState, FormationMeta> = {
     uiColorHex: '#a7f3d0',
     shaderId: 4,
   },
-  [FormationState.SWORD_SILK]: {
-    id: FormationState.SWORD_SILK,
-    name: '剑丝流光',
-    trigger: '右手 4 指',
-    description: '剑光分化成丝，七条丝带缠绕流淌，绵绵不绝',
-    uiColor: 'text-green-300',
-    uiColorHex: '#86efac',
-    shaderId: 5,
-  },
   [FormationState.DAGENG_ARRAY]: {
     id: FormationState.DAGENG_ARRAY,
     name: '大庚剑阵',
@@ -164,6 +155,15 @@ export const FORMATION_META: Record<FormationState, FormationMeta> = {
     uiColor: 'text-amber-300',
     uiColorHex: '#fcd34d',
     shaderId: 6,
+  },
+  [FormationState.TONGTIAN_ARRAY]: {
+    id: FormationState.TONGTIAN_ARRAY,
+    name: '通天剑阵',
+    trigger: '右手 4 指',
+    description: '仙界剑阵：紫金仙纹剑柱通天彻地，万道剑雨落下，紫雷穿梭',
+    uiColor: 'text-purple-300',
+    uiColorHex: '#d8b4fe',
+    shaderId: 5,
   },
 };
 
