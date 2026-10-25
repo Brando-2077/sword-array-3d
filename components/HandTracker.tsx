@@ -22,7 +22,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   GestureRecognizer, FilesetResolver, GestureRecognizerResult,
 } from '@mediapipe/tasks-vision';
-import { GestureEstimator } from 'fingerpose';
 import {
   FormationState, HandData, HandRole, InteractionData,
   SWORD_COUNT_BY_FINGER, SPEED_LEVELS, SCALE_MIN, SCALE_MAX,
@@ -41,29 +40,7 @@ const MODEL_LOCAL = '/models/gesture_recognizer.task';
 const MODEL_REMOTE = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
 const WASM_BASE = '/mediapipe-wasm';
 
-// ─── 手指数量识别（根基）：fingerpose 逐指弯曲度，直接数伸直的手指 ──
-// ⚠️ fingerpose 要求关键点为 [x,y,z] 数组格式（对象格式会导致全 NaN，
-//    v7.0 的"全部识别成一样"即此因）。
-// 四指（食/中/无名/小）No Curl 记伸直；拇指 No Curl 计 1。
-// 语义：1=食指 2=食+中 3=+无名 4=+小指 5=全伸。
-const FP_EST = new GestureEstimator([]); // 空描述：只用其内部逐指弯曲度计算
-type PoseRow = [string, string, string];
-function countFromLandmarks(norm: WLM[]): { raw: number; curls: string } {
-  const arr = norm.map((p: WLM) => [p.x, p.y, p.z] as [number, number, number]);
-  try {
-    const r = FP_EST.estimate(arr, 0);
-    const pd = (r as { poseData?: PoseRow[] }).poseData;
-    if (!pd || pd.length < 5) return { raw: -1, curls: '' };
-    const curlOf = (f: string) => pd.find((x) => x[0] === f)?.[1] ?? '?';
-    const four = ['Index', 'Middle', 'Ring', 'Pinky'].filter((f) => curlOf(f) === 'No Curl').length;
-    const thumb = curlOf('Thumb') === 'No Curl' ? 1 : 0;
-    return { raw: four + thumb, curls: pd.map((x) => x[0][0] + x[1][0] + x[1].replace(/No Curl|Half Curl|Full Curl/, m => ({'No Curl':'直','Half Curl':'半','Full Curl':'曲'} as Record<string,string>)[m] ?? m)).join(' ') };
-  } catch {
-    return { raw: -1, curls: '' };
-  }
-}
-
-// 谷歌预训练手势兜底映射（fingerpose 无匹配时）
+// 谷歌预训练手势兜底映射（自研角度法无数据时）
 const GESTURE_TO_FINGERS: Record<string, number> = {
   Closed_Fist: 0,
   Point_Up: 1,
@@ -102,8 +79,38 @@ const HAND_CONNECTIONS: [number, number][] = [
 
 type WLM = { x: number; y: number; z: number };
 
-// ─── 单手状态机：手指数时序投票 + 掌心/测距平滑 ──────
+/** b 为顶点，∠abc 的角度（度）；用 3D 世界坐标（worldLandmarks，米制、旋转不变） */
+const dist3 = (a: WLM, b: WLM) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+const angleAt = (a: WLM, b: WLM, c: WLM) => {
+  const v1x = a.x - b.x, v1y = a.y - b.y, v1z = a.z - b.z;
+  const v2x = c.x - b.x, v2y = c.y - b.y, v2z = c.z - b.z;
+  const dot = v1x * v2x + v1y * v2y + v1z * v2z;
+  const m = Math.hypot(v1x, v1y, v1z) * Math.hypot(v2x, v2y, v2z);
+  return Math.acos(Math.min(1, Math.max(-1, dot / (m || 1e-9)))) * 180 / Math.PI;
+};
+
+// ─── 手指伸直判定（自研角度法，阈值取自用户真实手部数据日志） ──
+// 四指：PIP 关节角（MCP→PIP→TIP）；伸直 ~175°，半握 ~90-140°，全握 <90°
+// 拇指：掌骨→MCP→TIP 复合角；伸直偏 160°+
+const EXT_TH = 150;   // > 此值判伸直
+const CURL_TH = 110;  // < 此值判弯曲（与上行构成滞回带）
+const FINGER_CHAINS: [number, number, number][] = [
+  [5, 6, 8],    // 食指
+  [9, 10, 12],  // 中指
+  [13, 14, 16], // 无名指
+  [17, 18, 20], // 小指
+];
+/** 输出五指角度 [食,中,无名,小,拇]（度） */
+function fingerAngles(world: WLM[]): number[] {
+  const out: number[] = [];
+  for (const [mcp, pip, tip] of FINGER_CHAINS) out.push(angleAt(world[mcp], world[pip], world[tip]));
+  out.push(angleAt(world[1], world[2], world[4])); // 拇指：腕骨→MCP→TIP 大链角
+  return out;
+}
+
+// ─── 单手状态机：五指滞回 + 手指数时序投票 + 掌心/测距平滑 ──
 class HandState {
+  private ext = [false, false, false, false, false]; // 拇..小（滞回态）
   private candCount = -1;
   private candFrames = 0;
   private stableCount = -1;
@@ -114,10 +121,18 @@ class HandState {
   // 自动量程校准：记住本只手实际可达的最近/最远距离，拉伸为满档 0~1（无盲区）
   private minCm = 0; private maxCm = 0; private cal = false;
 
-  /** 输入本帧原始手指数（-1=未识别）+landmarks，输出稳定手指数/掌心/距离(cm) */
-  update(rawCount: number, norm: WLM[], nowMs: number): {
+  /** 输入五指角度（度）+landmarks，输出稳定手指数/掌心/距离(cm) */
+  update(angles: number[], norm: WLM[], nowMs: number): {
     count: number; x: number; y: number; distance: number; distCm: number; normSm: WLM[];
   } {
+    // 五指滞回判定（伸直/弯曲双阈值，消除临界抖动）
+    for (let f = 0; f < 5; f++) {
+      const ang = angles[f];
+      if (!this.ext[f] && ang > EXT_TH) this.ext[f] = true;
+      else if (this.ext[f] && ang < CURL_TH) this.ext[f] = false;
+    }
+    const rawCount = this.ext.reduce((n, e) => n + (e ? 1 : 0), 0);
+
     // 手指数时序投票
     if (rawCount === this.candCount) this.candFrames++;
     else { this.candCount = rawCount; this.candFrames = 1; }
@@ -496,24 +511,26 @@ function analyze(
 ): { hand: HandData; count: number; normSm: WLM[] | null } {
   if (idx < 0) return { hand: blankHand(role), count: -1, normSm: null };
   const norm = result.landmarks[idx] as WLM[];
-  if (!norm || norm.length < 21) return { hand: blankHand(role), count: -1, normSm: null };
+  const world = result.worldLandmarks?.[idx] as WLM[] | undefined;
+  if (!norm || norm.length < 21 || !world || world.length < 21)
+    return { hand: blankHand(role), count: -1, normSm: null };
 
-  // 手指数判定：fingerpose 逐指弯曲度直接计数（真·伸指数 0~5），谷歌预训练手势兜底
-  const { raw, curls } = countFromLandmarks(norm);
-  let rawCount = raw;
-  if (rawCount < 0) {
-    const google = result.gestures?.[idx]?.[0]?.categoryName ?? 'None';
-    rawCount = fingerCountOf(google);
-  }
-  // 实时数据记录器：控制台 window.__FINGERLOG 可查每帧逐指弯曲度与判定
+  // 手指数判定：自研 3D 关节角法（PIP 角 + 滞回），真实角度全量入日志
+  const angles = fingerAngles(world);
+  const r = state.update(angles, norm, nowMs);
+
+  // 实时数据记录器：控制台 window.__FINGERLOG 可查每帧五指角度与判定
   try {
     const w = window as any;
     if (!w.__FINGERLOG) w.__FINGERLOG = [];
-    w.__FINGERLOG.push({ t: Date.now(), side: role === HandRole.RIGHT ? 'R' : 'L', raw: rawCount, curls, google: result.gestures?.[idx]?.[0]?.categoryName ?? 'None' });
+    w.__FINGERLOG.push({
+      t: Date.now(), side: role === HandRole.RIGHT ? 'R' : 'L',
+      raw: r.count, angles: angles.map((a) => Math.round(a)),
+      google: result.gestures?.[idx]?.[0]?.categoryName ?? 'None',
+    });
     if (w.__FINGERLOG.length > 300) w.__FINGERLOG.splice(0, w.__FINGERLOG.length - 300);
   } catch { /* noop */ }
 
-  const r = state.update(raw, norm, nowMs);
   return {
     hand: {
       role, detected: true,
