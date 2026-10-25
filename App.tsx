@@ -62,7 +62,8 @@ const App: any = () => {
 
   // ── 派生展示数据 ──────────────────────────────
   const scale         = smoothScale.current;
-  const count         = Math.round(smoothCount.current);
+  const count         = Math.round(smoothCount.current);          // 平滑值：仅供 3D 渐变
+  const targetCount   = interact.swordCount;                      // 目标档位：UI 显示用（始终为档位值）
   const speed         = smoothSpeed.current;
   const formation     = interact.formation;
   const meta          = FORMATION_META[formation as FormationState];
@@ -179,13 +180,13 @@ const App: any = () => {
                 {/* 飞剑数量 */}
                 <ParamPanel
                   label="飞剑数量"
-                  value={count.toString()}
+                  value={String(targetCount)}
                   valueColor="text-amber-300"
                   valueShadow="0 0 40px rgba(245,158,11,0.7)"
                   minWidth={120}
                   dots={{
                     count: 5,
-                    active: ({ 9: 1, 12: 2, 24: 3, 36: 4, 72: 5 } as Record<number, number>)[count] ?? 0,
+                    active: ({ 9: 1, 12: 2, 24: 3, 36: 4, 72: 5 } as Record<number, number>)[targetCount] ?? 0,
                     color: 'linear-gradient(to right, #d97706, #fbbf24)',
                     glow: 'rgba(251,191,36,0.7)',
                   }}
