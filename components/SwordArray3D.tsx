@@ -1,26 +1,30 @@
 /**
  * SwordArray3D — 3D 剑阵渲染核心
- * @version 4.0 招式重制（全部换用动漫中真实存在的韩立剑招）
+ * @version 5.0 质感复辟：v1.0 渲染灵魂全面回归
  * @description
- *   渲染架构沿用 v3.0：辉光剑影 billboard（512 剑满帧、屏幕空间朝向、
- *   速度拉伸流光、星穹背景、Bloom 自适应）。
+ *   v3.0 曾把真 3D 剑换成辉光贴片换取 512 剑数量，视觉浓度断崖下降；
+ *   v5.0 把 v1.0 的全部视觉资产移植回当前引擎，两者兼得：
  *
- *   七式招数（v4.1，均有动漫/原著出处，经九式竞演裁汰）：
- *   - IDLE 御剑巡空：群剑在大体积星域自由游弋（御剑飞行）
- *   - THOUSAND_SILK 千丝绞杀：金丝织茧缠敌，层层收紧（vs 阴罗宗四长老名场面）
- *   - SWORD_BEAM 青元剑芒：一线剑光流随手疾射（筑基期标志剑光）
- *   - SWORD_SHADOW 剑影分光术：一实四虚五道剑影扇面（飞剑分影名场面）
- *   - SWORD_SHIELD 青元剑盾：剑光成栅结盾，微摆御敌（护体剑盾神通）
- *   - TONGTIAN_ARRAY 通天剑阵：紫金剑柱+剑雨+紫雷（仙界剑阵）
- *   - DAGENG_ARRAY 大庚剑阵：万剑齐发放射剑球（元婴至高神通）
- *   竞演淘汰：剑丝流光、春黎剑阵（视觉不及上述七式）
+ *   自 v1.0 回归：
+ *   - 真 3D 剑模型（ExtrudeGeometry 竹刃翼形护手）+ 程序化青竹蜂云剑材质
+ *     （竹节环纹、金色雷电弧、菲涅尔描金、剑尖脉动、速度辉光、高速拉伸）
+ *   - 能量拖尾粒子（每剑 3 粒，生命渐隐漂移，按阵式换色）
+ *   - Boids 群体智能 IDLE（5 簇分离/对齐/聚合 + 边界力 + 自适应摩擦）
+ *   - 龙形链式跟随 + 速度预测（青元剑芒即龙脊一线）
+ *   - 非线性 PD 弹簧 + 有机正弦摆动 + 速度自适应摩擦
+ *   - Bloom 1.15 呼吸脉动（v3.0 曾砍到 0.62）
+ *
+ *   保留 v4.x：
+ *   - 512 剑容量、七式动漫真实招式、调试参数、星穹背景
+ *   - 零分配纪律（Quaternion/Matrix 全复用，Boids 用对象池）
+ *   - 剑刃真实 3D 朝向：沿速度 / 径向 / 竖直（比屏幕空间角度更立体）
  */
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass }     from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { FormationState, SCALE_MIN, SCALE_MAX } from '../types';
+import { FormationState, SCALE_MIN } from '../types';
 
 // ─── Props ────────────────────────────────────────
 interface SwordArray3DProps {
@@ -28,138 +32,169 @@ interface SwordArray3DProps {
   cursorX: number;       // 0~1，已镜像
   cursorY: number;       // 0~1
   cursorActive: boolean;
-  swordScale: number;    // 5~30
+  swordScale: number;    // 5~30（v1.0 语义：直接作实例缩放）
   swordCount: number;    // 32~512
   animSpeed: number;     // 0.25~1.75
 }
 
 // ─── 常量 ─────────────────────────────────────────
-const MAX_SWORDS      = 512;        // 实例化 billboard 容量（v3.0：512）
-const PD_KP_BASE      = 0.16;       // PD 弹簧基准
-const PD_MAX_FORCE    = 300;        // PD 弹簧力上限
-const PD_DAMPING      = 0.62;       // PD 阻尼
-const PD_VEL_MAX      = 220;        // 速度上限
-const PD_VEL_MIN      = 10;         // 速度下限
-const PD_VEL_DECAY    = 0.92;       // 每帧速度衰减
-const WORLD_W         = 2800;       // 屏幕宽映射
-const WORLD_H         = 2000;       // 屏幕高映射
-const BLOOM_BASE      = 0.62;       // Bloom 基准强度（过强会洗白剑群）
-const BLOOM_PULSE     = 0.10;       // Bloom 动态脉冲幅度
-const STAR_COUNT      = 1600;       // 星空粒子数
-const TAU             = Math.PI * 2;
-const GOLDEN          = 2.39996323; // 黄金角（斐波那契球分布）
+const MAX_SWORDS   = 512;
+const WORLD_W      = 2800;
+const WORLD_H      = 2000;
+const BLOOM_BASE   = 1.15;      // v1.0 浓辉光回归
+const BLOOM_PULSE  = 0.15;
+const STAR_COUNT   = 1600;
+const TAU          = Math.PI * 2;
+const GOLDEN       = 2.39996323;
 
-// ─── 剑色方案（按阵式：A 暗基色 → B 亮色，高饱和防洗白，金斑由种子触发） ──
+// PD 物理调参（v1.0 原味）
+const PD_KP        = 0.28;
+const PD_KD        = 0.60;
+const PD_MAX_FORCE = 260;
+const PD_VEL_MAX   = 320;
+const VEL_MIN      = 18;
+const BASE_FRICTION = 0.955;
+
+// ─── 剑色方案（A 暗基 → B 亮色；金雷弧始终保留金） ──
 const FORMATION_COLORS: Record<FormationState, number[]> = {
-  [FormationState.IDLE]:          [0.02, 0.38, 0.16,  0.30, 1.00, 0.45],
-  [FormationState.THOUSAND_SILK]: [0.30, 0.22, 0.04,  1.00, 0.82, 0.30],
-  [FormationState.SWORD_BEAM]:    [0.03, 0.48, 0.20,  0.50, 1.00, 0.65],
-  [FormationState.SWORD_SHADOW]:  [0.02, 0.40, 0.18,  0.35, 0.95, 0.60],
-  [FormationState.SWORD_SHIELD]:  [0.02, 0.34, 0.22,  0.35, 0.95, 0.75],
-  [FormationState.DAGENG_ARRAY]:  [0.12, 0.30, 0.08,  0.90, 0.95, 0.40],
-  [FormationState.TONGTIAN_ARRAY]: [0.12, 0.06, 0.28,  0.72, 0.55, 1.00],
+  [FormationState.IDLE]:           [0.05, 0.30, 0.15,  0.30, 1.00, 0.50],
+  [FormationState.THOUSAND_SILK]:  [0.34, 0.24, 0.05,  1.00, 0.84, 0.34],
+  [FormationState.SWORD_BEAM]:     [0.04, 0.40, 0.18,  0.42, 1.00, 0.62],
+  [FormationState.SWORD_SHADOW]:   [0.03, 0.32, 0.16,  0.34, 0.95, 0.60],
+  [FormationState.SWORD_SHIELD]:   [0.03, 0.30, 0.18,  0.36, 0.98, 0.72],
+  [FormationState.TONGTIAN_ARRAY]: [0.13, 0.07, 0.28,  0.72, 0.58, 1.00],
+  [FormationState.DAGENG_ARRAY]:   [0.14, 0.28, 0.08,  0.92, 0.98, 0.45],
 };
 
-// ─── 剑的屏幕空间朝向模式 ─────────────────────────
-const enum AngleMode { VELOCITY, RADIAL, TANGENT, FIXED, FLOW }
-const FORMATION_ANGLE_MODE: Record<FormationState, AngleMode> = {
-  [FormationState.IDLE]:          AngleMode.VELOCITY,
-  [FormationState.THOUSAND_SILK]: AngleMode.TANGENT,
-  [FormationState.SWORD_BEAM]:    AngleMode.FLOW,
-  [FormationState.SWORD_SHADOW]:  AngleMode.RADIAL,
-  [FormationState.SWORD_SHIELD]:  AngleMode.FIXED,
-  [FormationState.DAGENG_ARRAY]:  AngleMode.RADIAL,
-  [FormationState.TONGTIAN_ARRAY]: AngleMode.FIXED,
-};
-
-// ─── Shader：辉光剑影 billboard 顶点 ──────────────
+// ─── 青竹蜂云剑 Shader（v1.0 材质 + 阵式色参数化 + 虚实/种子实例属性） ──
 const swordVertexShader = /* glsl */ `
-  attribute vec3  aPos;      // 实例世界坐标（每帧更新）
-  attribute float aAngle;    // 屏幕空间刃向角
-  attribute float aStretch;  // 速度拉伸（1=原长）
-  attribute float aAlpha;    // 每实例透明度（虚实剑影）
-  attribute float aSeed;     // 每实例种子
+  attribute vec3  instanceVelocity;
+  attribute float aAlpha;   // 虚实（剑影分光术的影 = 低透明度）
+  attribute float aSeed;    // 每剑种子（雷弧相位/微差异）
 
-  uniform float uSize;
-
+  varying float vVel;
   varying vec2  vUv;
+  varying float vFresnel;
+  varying float vHeight;
   varying float vAlpha;
   varying float vSeed;
 
   void main() {
-    vUv = position.xy;                 // 四边形角点 -0.5~0.5
+    float speed = length(instanceVelocity);
+    vVel = speed;
+    vUv = uv;
+    vHeight = position.y;
     vAlpha = aAlpha;
-    vSeed = fract(aSeed * 7.13);
+    vSeed = aSeed;
 
-    vec4 mv = modelViewMatrix * vec4(aPos, 1.0);
-    // 屏幕空间 billboard：沿刃向（局部 +y）旋转 + 拉伸
-    float c = cos(aAngle), s = sin(aAngle);
-    vec2 corner = vec2(position.x, position.y * aStretch);
-    vec2 rot = vec2(corner.x * c - corner.y * s, corner.x * s + corner.y * c);
-    mv.xy += rot * uSize;
-    gl_Position = projectionMatrix * mv;
+    vec3 pos = position;
+    // 高速拉伸（v1.0 液态流动感）
+    if (pos.y > 0.0) pos.y += clamp(speed * 0.40, 0.0, 12.0);
+
+    vec4 instancePosition = instanceMatrix * vec4(pos, 1.0);
+    vec3 worldNormal = normalize(mat3(instanceMatrix) * normal);
+    vec3 viewDir = normalize(cameraPosition - instancePosition.xyz);
+    vFresnel = pow(1.0 - abs(dot(worldNormal, viewDir)), 2.5);
+
+    gl_Position = projectionMatrix * modelViewMatrix * instancePosition;
   }
 `;
 
-// ─── Shader：辉光剑影 片元（程序化剑形 SDF + 辉光） ──
 const swordFragmentShader = /* glsl */ `
+  varying float vVel;
   varying vec2  vUv;
+  varying float vFresnel;
+  varying float vHeight;
   varying float vAlpha;
   varying float vSeed;
 
   uniform float uTime;
-  uniform vec3  uColA;
-  uniform vec3  uColB;
-  uniform float uFlash;
+  uniform vec3  uColA;   // 阵式暗基色
+  uniform vec3  uColB;   // 阵式亮色
+  uniform float uFlash;  // 切阵白闪
 
-  // 线段距离函数
-  float sdSeg(vec2 p, vec2 a, vec2 b) {
-    vec2 pa = p - a, ba = b - a;
-    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-    return length(pa - ba * h);
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+  float noise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
   }
 
   void main() {
-    vec2 uv = vUv;
+    // 色板：v1.0 青竹蜂云剑（玉三阶 + 金二阶），玉色按阵式参数化
+    vec3 jadeCore  = uColA;
+    vec3 jadeMid   = mix(uColA, uColB, 0.6);
+    vec3 jadeGlow  = uColB;
+    vec3 goldAccent = vec3(1.0, 0.72, 0.15);
+    vec3 goldEdge  = vec3(1.0, 0.85, 0.25);
 
-    // 剑身（0.04~0.62，向剑尖收窄；占四边形比例更大，剑感更强）
-    float dBlade = sdSeg(uv, vec2(0.0, 0.04), vec2(0.0, 0.62));
-    float bt = clamp((uv.y - 0.04) / 0.58, 0.0, 1.0);
-    float wBlade = mix(0.048, 0.012, bt);
-    float blade = exp(-pow(dBlade / wBlade, 2.0) * 2.0);
-    // 剑刃亮芯
-    float core = exp(-pow(dBlade / (wBlade * 0.28), 2.0) * 2.0) * step(uv.y, 0.62) * step(0.02, uv.y);
-    // 剑尖辉光
-    float tip = exp(-pow(length(uv - vec2(0.0, 0.62)) * 24.0, 2.0));
-    // 护手（金色横杆）
-    float dGuard = sdSeg(uv, vec2(-0.15, 0.03), vec2(0.15, 0.03));
-    float guard = exp(-pow(dGuard / 0.020, 2.0) * 2.0);
-    // 剑柄
-    float dHilt = sdSeg(uv, vec2(0.0, -0.30), vec2(0.0, 0.01));
-    float hilt = exp(-pow(dHilt / 0.016, 2.0) * 2.0);
+    bool isBlade = vHeight > 0.15;
+    bool isTip   = vHeight > 21.0;
 
-    float body = max(blade, max(guard * 0.6, hilt * 0.5));
-    if (body < 0.004) { gl_FragColor = vec4(0.0); return; }
+    vec3 baseColor;
+    float alpha = vAlpha;
 
-    vec3 green = mix(uColA, uColB, bt * 0.55 + vSeed * 0.45);
-    vec3 gold  = vec3(1.0, 0.78, 0.30);
+    if (isBlade) {
+      // ── 竹节环纹（每 ~3.5 单位一节） ──
+      float nodePhase = vHeight / 3.5;
+      float nodeFrac = fract(nodePhase);
+      float nodeGlow = smoothstep(0.0, 0.06, nodeFrac) * smoothstep(0.14, 0.08, nodeFrac);
+      nodeGlow = 1.0 - nodeGlow;
+      float ring = smoothstep(0.0, 0.015, nodeFrac) * smoothstep(0.03, 0.015, nodeFrac);
 
-    // 金斑剑：约 1/5 的剑呈金色（青竹蜂云剑的金雷弧意象）
-    float isGold = step(0.80, vSeed);
-    vec3 col = mix(green, gold * 0.9, isGold) * body;
-    col += vec3(1.0, 0.80, 0.35) * guard * 0.45;                          // 护手描金
-    col += mix(green, vec3(0.9, 1.0, 0.95), 0.35) * core * (1.0 - isGold * 0.5); // 剑刃亮芯（保绿不过白）
-    col += vec3(0.75, 1.0, 0.80) * tip * (0.30 + 0.25 * sin(uTime * 6.0 + vSeed * 40.0)); // 剑尖翠光
+      float heightGrad = smoothstep(0.15, 24.0, vHeight);
+      baseColor = mix(jadeCore, jadeMid, heightGrad * 0.7);
+      baseColor = mix(baseColor, jadeGlow, ring * 0.35);
+      baseColor = mix(baseColor, goldAccent * 0.5, ring * 0.15);
 
-    // 阵式切换白闪
-    col += vec3(1.0) * uFlash * 0.30;
+      float lateral = abs(vUv.x - 0.5) * 2.0;
+      baseColor = mix(baseColor, jadeCore * 0.6, smoothstep(0.3, 0.85, lateral) * 0.4);
+      baseColor = mix(baseColor, jadeGlow, smoothstep(22.0, 26.0, vHeight) * 0.6);
 
-    float alpha = clamp(body * 1.0, 0.0, 1.0) * vAlpha;
-    gl_FragColor = vec4(col, alpha);
+      // ── 金色雷电弧（三频噪声，只出现在剑缘与竹节） ──
+      float lx = vUv.x * 8.0 + vSeed * 13.0;
+      float ly = vHeight * 0.6 + uTime * 2.0;
+      float n1 = noise(vec2(lx + uTime * 3.0, ly));
+      float n2 = noise(vec2(lx * 2.3 - uTime * 2.0, ly * 1.5));
+      float n3 = noise(vec2(lx * 4.1 + uTime * 1.5, ly * 0.8 - uTime));
+      float edgeMask = smoothstep(0.3, 0.7, lateral) * (1.0 - smoothstep(0.85, 1.0, lateral));
+      float lightning = pow(n1 * n2 * n3, 1.5);
+      lightning = smoothstep(0.65, 0.78, lightning) * edgeMask * (0.4 + nodeGlow * 0.6);
+      baseColor = mix(baseColor, goldAccent * 2.5, lightning * 0.8);
+      baseColor += goldAccent * lightning * 0.4;
+
+      // 剑身能量脉动
+      float pulse = sin(uTime * 8.0 + vHeight * 0.4 + vSeed * 6.28) * 0.5 + 0.5;
+      baseColor += jadeGlow * pulse * edgeMask * 0.15;
+    } else {
+      // ── 剑柄 / 护手：暗竹柄金缠纹 ──
+      float hiltRing = smoothstep(-0.85, -0.75, vHeight) * smoothstep(-0.65, -0.75, vHeight);
+      float guardTop = smoothstep(-0.05, 0.15, vHeight);
+      baseColor = mix(jadeCore * 0.5, goldAccent, hiltRing * 0.8);
+      baseColor = mix(baseColor, goldEdge * 1.5, guardTop * 0.6);
+      float wrapPattern = abs(sin(vHeight * 3.0 + vUv.x * 15.0));
+      baseColor = mix(baseColor, goldAccent * 1.3, wrapPattern * smoothstep(-6.0, -1.0, vHeight) * 0.3);
+    }
+
+    // ── 菲涅尔描金 + 速度辉光 ──
+    vec3 rim = goldEdge * 1.8 * vFresnel;
+    float speedGlow = clamp(vVel, 0.0, 50.0) / 50.0;
+    rim += goldAccent * speedGlow * 0.3;
+    vec3 finalColor = baseColor + rim;
+
+    if (isTip) finalColor += goldAccent * (1.0 + sin(uTime * 15.0 + vSeed * 6.28) * 0.5) * 0.4;
+    finalColor += vec3(1.0) * uFlash * 0.35; // 切阵白闪
+
+    gl_FragColor = vec4(finalColor, alpha);
   }
 `;
 
-// ─── Shader：星穹背景（深蓝紫渐变 + 双辉光 + 抖动去色带） ──
+// ─── 星穹背景（v3.0 保留） ─────────────────────────
 const bgVertexShader = /* glsl */ `
   varying vec2 vNdc;
   void main() {
@@ -171,28 +206,23 @@ const bgFragmentShader = /* glsl */ `
   varying vec2 vNdc;
   void main() {
     vec2 p = vNdc;
-    // 垂直渐变：底部微亮地平 → 中层深蓝 → 顶部近黑（压暗，突出剑群辉光）
     vec3 top = vec3(0.004, 0.006, 0.022);
     vec3 mid = vec3(0.014, 0.018, 0.055);
     vec3 bot = vec3(0.028, 0.042, 0.105);
     vec3 col = mix(bot, mid, smoothstep(-1.0, 0.05, p.y));
     col = mix(col, top, smoothstep(0.05, 1.0, p.y));
-    // 底部中央：青翠辉光（剑气之源）
     float d1 = length((p - vec2(0.0, -1.2)) * vec2(1.0, 0.55));
     col += vec3(0.05, 0.34, 0.20) * exp(-d1 * 2.3) * 0.35;
-    // 右上：紫金辉光
     float d2 = length((p - vec2(0.78, 0.62)) * vec2(0.85, 1.0));
     col += vec3(0.20, 0.10, 0.36) * exp(-d2 * 1.8) * 0.30;
-    // 抖动去色带
     col += (fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.012;
-    // 暗角
     col *= 1.0 - 0.38 * dot(p * 0.68, p * 0.68);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
 
-// ─── 星空 ─────────────────────────────────────────
-function createStarfield(count: number): any {
+// ─── 星空（v3.0 保留） ─────────────────────────────
+function createStarfield(count: number): THREE.Points {
   const positions = new Float32Array(count * 3);
   const colors    = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
@@ -202,7 +232,6 @@ function createStarfield(count: number): any {
     positions[i * 3]     = Math.sin(phi) * Math.cos(theta) * r;
     positions[i * 3 + 1] = Math.sin(phi) * Math.sin(theta) * r;
     positions[i * 3 + 2] = Math.cos(phi) * r - 2000;
-    // 72% 银白 + 16% 翠绿 + 12% 金色
     const c = Math.random();
     if (c < 0.16)      { colors[i*3]=0.25; colors[i*3+1]=0.95; colors[i*3+2]=0.55; }
     else if (c < 0.28) { colors[i*3]=1.0;  colors[i*3+1]=0.85; colors[i*3+2]=0.45; }
@@ -211,39 +240,122 @@ function createStarfield(count: number): any {
   const geom = new THREE.BufferGeometry();
   geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geom.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
-  const mat  = new THREE.PointsMaterial({
+  const mat = new THREE.PointsMaterial({
     size: 2.2, vertexColors: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false, transparent: true, opacity: 0.65,
+    blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.65,
   });
   return new THREE.Points(geom, mat);
 }
 
-// ─── 飞剑粒子状态 ─────────────────────────────────
-interface SwordParticle {
-  pos: any;
-  vel: any;
-  offset: number;
+// ─── 能量拖尾粒子（v1.0 回归，按阵式换色） ──────────
+function createTrailParticles(maxSwords: number): {
+  points: THREE.Points;
+  setColor: (r: number, g: number, b: number) => void;
+  update: (swordPositions: Float32Array, count: number, dt: number) => void;
+} {
+  const trailCount = maxSwords * 3;
+  const positions = new Float32Array(trailCount * 3);
+  const colors    = new Float32Array(trailCount * 3);
+  const life      = new Float32Array(trailCount);
+  const attached  = new Int16Array(trailCount);
+  let baseR = 0.3, baseG = 1.0, baseB = 0.5;
+
+  for (let i = 0; i < trailCount; i++) {
+    positions[i*3+1] = -10000;
+    life[i] = 0;
+    attached[i] = i % maxSwords;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+  const mat = new THREE.PointsMaterial({
+    size: 5.0, vertexColors: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.55,
+  });
+  const points = new THREE.Points(geo, mat);
+  points.frustumCulled = false;
+
+  let elapsed = 0;
+  const spawnInterval = 0.03;
+
+  const update = (swordPositions: Float32Array, count: number, dt: number) => {
+    elapsed += dt;
+    for (let i = 0; i < trailCount; i++) {
+      const s = attached[i];
+      if (s >= count) { life[i] = 0; positions[i*3+1] = -10000; continue; }
+      life[i] -= dt * 3.0;
+      if (life[i] <= 0 && elapsed > spawnInterval) {
+        positions[i*3]   = swordPositions[s*3];
+        positions[i*3+1] = swordPositions[s*3+1];
+        positions[i*3+2] = swordPositions[s*3+2];
+        life[i] = 0.4 + Math.random() * 0.6;
+        elapsed = 0;
+      } else if (life[i] > 0) {
+        positions[i*3]   += (Math.random() - 0.5) * 4;
+        positions[i*3+1] += (Math.random() - 0.5) * 4;
+        positions[i*3+2] += (Math.random() - 0.5) * 2;
+        const t = life[i];
+        colors[i*3] = baseR * t; colors[i*3+1] = baseG * t; colors[i*3+2] = baseB * t;
+      }
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  };
+
+  return {
+    points,
+    setColor: (r, g, b) => { baseR = r; baseG = g; baseB = b; },
+    update,
+  };
 }
 
-// ─── 工具：黄金角斐波那契球方向 ───────────────────
-const fibDir = (i: number, count: number, out: any) => {
+// ─── 青竹蜂云剑几何（v1.0 原形：竹刃 + 翼形护手 + 竹柄） ──
+function createSwordGeometry(): THREE.ExtrudeGeometry {
+  const shape = new THREE.Shape();
+  // 柄：竹节微收
+  shape.moveTo(-0.35, -7.0);
+  shape.lineTo(0.35, -7.0);
+  shape.lineTo(0.22, -1.2);
+  shape.lineTo(-0.22, -1.2);
+  shape.lineTo(-0.35, -7.0);
+  // 护手：翼形贝塞尔
+  shape.moveTo(-1.6, -1.2);
+  shape.lineTo(1.6, -1.2);
+  shape.lineTo(1.8, -0.5);
+  shape.bezierCurveTo(1.2, -0.35, 0.8, 0.0, 0.35, 0.15);
+  shape.lineTo(-0.35, 0.15);
+  shape.bezierCurveTo(-0.8, 0.0, -1.2, -0.35, -1.8, -0.5);
+  shape.lineTo(-1.6, -1.2);
+  // 剑刃：竹刃缓收至尖
+  const bladeLen = 26.0;
+  shape.moveTo(-0.25, 0.15);
+  shape.lineTo(0.25, 0.15);
+  shape.bezierCurveTo(0.25, 4.0, 0.22, 12.0, 0.06, bladeLen - 2.0);
+  shape.lineTo(0.0, bladeLen + 1.5);
+  shape.lineTo(-0.06, bladeLen - 2.0);
+  shape.bezierCurveTo(-0.22, 12.0, -0.25, 4.0, -0.25, 0.15);
+  return new THREE.ExtrudeGeometry(shape, {
+    depth: 0.4, bevelEnabled: true, bevelThickness: 0.15, bevelSize: 0.15, bevelSegments: 3,
+  });
+}
+
+// ─── 工具 ─────────────────────────────────────────
+const fibDir = (i: number, count: number, out: THREE.Vector3) => {
   const y = 1 - (2 * (i + 0.5)) / count;
   const rad = Math.sqrt(Math.max(0, 1 - y * y));
   const a = i * GOLDEN;
   out.set(Math.cos(a) * rad, y, Math.sin(a) * rad);
   return out;
 };
-
 const fract = (x: number) => x - Math.floor(x);
 
-// ─── 组件 ─────────────────────────────────────────
+// ─── 主组件 ───────────────────────────────────────
 const SwordArray3D: React.FC<SwordArray3DProps> = ({
   formation, cursorX, cursorY, cursorActive, swordScale, swordCount, animSpeed,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
 
-  // ★ props → ref 实时同步（避免 useEffect 闭包陷阱）
+  // props → ref 实时同步（避免闭包陷阱）
   const propsRef = useRef({ formation, cursorX, cursorY, cursorActive, swordScale, swordCount, animSpeed });
   useEffect(() => {
     propsRef.current = { formation, cursorX, cursorY, cursorActive, swordScale, swordCount, animSpeed };
@@ -255,29 +367,24 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
     const width  = container.clientWidth;
     const height = container.clientHeight;
 
-    // ── Scene / Camera / Renderer ────────────────
+    // ── Scene / Camera / Renderer ──
     const scene  = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(38, width / height, 1, 20000);
     camera.position.set(0, 0, 2600);
-    camera.updateMatrixWorld(true);
-    camera.matrixWorldInverse.copy(camera.matrixWorld).invert(); // 静态相机，手动预计算供 project() 用
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true, alpha: false, powerPreference: 'high-performance',
-    });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
+    renderer.toneMappingExposure = 1.15;
     container.appendChild(renderer.domElement);
 
-    // ── Composer + Bloom ────────────────────────
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), BLOOM_BASE, 0.55, 0.42);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), BLOOM_BASE, 0.5, 0.55);
     composer.addPass(bloomPass);
 
-    // ── 星穹背景 ─────────────────────────────────
+    // ── 星穹背景 + 星空 ──
     const bgGeom = new THREE.BufferGeometry();
     bgGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 3, -1, -1, 3]), 2));
     const bgMat = new THREE.ShaderMaterial({
@@ -288,395 +395,372 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
     bgMesh.frustumCulled = false;
     bgMesh.renderOrder = -10;
     scene.add(bgMesh);
-
-    // ── 星空 ─────────────────────────────────────
     const starfield = createStarfield(STAR_COUNT);
     scene.add(starfield);
 
-    // ── 剑阵 InstancedBufferGeometry（billboard 四边形） ──
-    const baseQuad = new THREE.PlaneGeometry(1, 1);
-    const geom = new THREE.InstancedBufferGeometry();
-    geom.index = baseQuad.index;
-    geom.setAttribute('position', baseQuad.getAttribute('position'));
-
-    const posArr     = new Float32Array(MAX_SWORDS * 3);
-    const angleArr   = new Float32Array(MAX_SWORDS);
-    const stretchArr = new Float32Array(MAX_SWORDS);
-    const alphaArr   = new Float32Array(MAX_SWORDS);
-    const seedArr    = new Float32Array(MAX_SWORDS);
-    for (let i = 0; i < MAX_SWORDS; i++) {
-      seedArr[i]  = fract(i * 0.618033987);
-      alphaArr[i] = 1;
-      angleArr[i] = Math.PI / 2;
-      stretchArr[i] = 1;
-    }
-    const attrPos = new THREE.InstancedBufferAttribute(posArr, 3).setUsage(THREE.DynamicDrawUsage);
-    const attrAngle = new THREE.InstancedBufferAttribute(angleArr, 1).setUsage(THREE.DynamicDrawUsage);
-    const attrStretch = new THREE.InstancedBufferAttribute(stretchArr, 1).setUsage(THREE.DynamicDrawUsage);
-    const attrAlpha = new THREE.InstancedBufferAttribute(alphaArr, 1).setUsage(THREE.DynamicDrawUsage);
-    geom.setAttribute('aPos', attrPos);
-    geom.setAttribute('aAngle', attrAngle);
-    geom.setAttribute('aStretch', attrStretch);
-    geom.setAttribute('aAlpha', attrAlpha);
-    geom.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seedArr, 1));
-
+    // ── 剑阵 InstancedMesh（真 3D 剑） ──
+    const geom = createSwordGeometry();
     const material = new THREE.ShaderMaterial({
-      vertexShader:   swordVertexShader,
+      vertexShader: swordVertexShader,
       fragmentShader: swordFragmentShader,
       uniforms: {
         uTime:  { value: 0 },
-        uSize:  { value: 36 },
-        uColA:  { value: new THREE.Color(0.05, 0.5, 0.28) },
-        uColB:  { value: new THREE.Color(0.45, 1.0, 0.62) },
+        uColA:  { value: new THREE.Color(0.05, 0.30, 0.15) },
+        uColB:  { value: new THREE.Color(0.30, 1.00, 0.50) },
         uFlash: { value: 0 },
       },
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      depthTest: false,
     });
-    const swordMesh = new THREE.Mesh(geom, material);
+    const swordMesh = new THREE.InstancedMesh(geom, material, MAX_SWORDS);
+    swordMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     swordMesh.frustumCulled = false;
+
+    // 实例属性：速度（拉伸/辉光）、虚实（分光影）、种子（雷弧相位）
+    const velArr   = new Float32Array(MAX_SWORDS * 3);
+    const alphaArr = new Float32Array(MAX_SWORDS).fill(1);
+    const seedArr  = new Float32Array(MAX_SWORDS);
+    for (let i = 0; i < MAX_SWORDS; i++) seedArr[i] = fract(i * 0.618033987);
+    const attrVel   = new THREE.InstancedBufferAttribute(velArr, 3).setUsage(THREE.DynamicDrawUsage);
+    const attrAlpha = new THREE.InstancedBufferAttribute(alphaArr, 1).setUsage(THREE.DynamicDrawUsage);
+    geom.setAttribute('instanceVelocity', attrVel);
+    geom.setAttribute('aAlpha', attrAlpha);
+    geom.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seedArr, 1));
     scene.add(swordMesh);
 
-    // ── 粒子状态池 ───────────────────────────────
-    const particles: SwordParticle[] = new Array(MAX_SWORDS);
+    // ── 拖尾粒子 ──
+    const trailSystem = createTrailParticles(MAX_SWORDS);
+    scene.add(trailSystem.points);
+
+    // ── 粒子状态（pos/vel/acc + 常驻朝向四元数） ──
+    interface P { pos: THREE.Vector3; vel: THREE.Vector3; acc: THREE.Vector3; offset: number; quat: THREE.Quaternion }
+    const particles: P[] = new Array(MAX_SWORDS);
     for (let i = 0; i < MAX_SWORDS; i++) {
       particles[i] = {
-        pos:    new THREE.Vector3((Math.random() - 0.5) * 4000, (Math.random() - 0.5) * 3000, (Math.random() - 0.5) * 1600 - 400),
-        vel:    new THREE.Vector3(0, 0, 0),
-        offset: fract(i * 0.754877666) * TAU,
+        pos: new THREE.Vector3((Math.random() - 0.5) * 4000, (Math.random() - 0.5) * 3000, (Math.random() - 0.5) * 1600 - 400),
+        vel: new THREE.Vector3(),
+        acc: new THREE.Vector3(),
+        offset: (i / MAX_SWORDS) * TAU,
+        quat: new THREE.Quaternion(),
       };
     }
 
-    // ── 屏幕投影缓存（速度方向 / 拉伸计算） ──────
-    const prevScreen = new Float32Array(MAX_SWORDS * 2).fill(Number.NaN);
-    const prevStretch = new Float32Array(MAX_SWORDS).fill(1);
-    let prevCount = 0;
+    // ── 零分配复用对象 ──
+    const matrix = new THREE.Matrix4();
+    const scaleV = new THREE.Vector3();
+    const t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), t3 = new THREE.Vector3(), t4 = new THREE.Vector3();
+    const fibTmp = new THREE.Vector3();
+    const UP = new THREE.Vector3(0, 1, 0);
+    const swordPosBuf = new Float32Array(MAX_SWORDS * 3);
 
-    // ── 复用对象（零分配） ───────────────────────
-    const tmpVec1 = new THREE.Vector3();
-    const tmpVec2 = new THREE.Vector3();
-    const tmpVec3 = new THREE.Vector3();
-    const tmpVec4 = new THREE.Vector3();
-    const fibTmp  = new THREE.Vector3();
-    const centerNdc = new THREE.Vector2();
-    const colA = new THREE.Color();
-    const colB = new THREE.Color();
+    // Boids 对象池（v1.0）
+    const boidVecs: THREE.Vector3[] = [];
+    const boidGet = () => { const v = boidVecs.pop() || new THREE.Vector3(); v.set(0, 0, 0); return v; };
+    const boidPut = (v: THREE.Vector3) => { if (boidVecs.length < 64) boidVecs.push(v); };
 
-    // ── 渲染循环 ────────────────────────────────
-    let time = 0;
-    let formationTime = 0;
+    // ── 渲染循环 ──
+    let time = 0, formationTime = 0;
     let prevFormation: FormationState | null = null;
-    let smoothCx = 0, smoothCy = 0;
-    let prevCx = 0, prevCy = 0;
-
-    let rafId = 0;
-    let running = true;
-
-    // 最短弧角度插值
-    const blendAngle = (a: number, b: number, t: number) => {
-      let d = (b - a) % TAU;
-      if (d > Math.PI) d -= TAU;
-      if (d < -Math.PI) d += TAU;
-      return a + d * t;
-    };
+    let smoothCx = 0, smoothCy = 0, prevCx = 0, prevCy = 0;
+    let cursorVx = 0, cursorVy = 0;
+    let prevCount = 0;
+    let rafId = 0, running = true;
 
     const loop = () => {
       if (!running) return;
       const p = propsRef.current;
       const liveFormation = p.formation;
-      const liveCursor    = p.cursorActive;
-      const liveScale     = p.swordScale;
-      const liveCount     = Math.max(1, Math.min(MAX_SWORDS, Math.floor(p.swordCount)));
+      const liveCount = Math.max(1, Math.min(MAX_SWORDS, Math.floor(p.swordCount)));
       const dt = 0.016 * p.animSpeed;
       time += dt;
 
-      // 阵式切换
+      // ── 阵式切换：换色 + 白闪 + 拖尾换色 ──
       if (liveFormation !== prevFormation) {
         formationTime = 0;
         prevFormation = liveFormation;
-        const colors = FORMATION_COLORS[liveFormation];
-        colA.setRGB(colors[0], colors[1], colors[2]);
-        colB.setRGB(colors[3], colors[4], colors[5]);
-        (material.uniforms.uColA.value as THREE.Color).copy(colA);
-        (material.uniforms.uColB.value as THREE.Color).copy(colB);
-        prevScreen.fill(Number.NaN); // 切阵后速度方向重新积累
+        const c = FORMATION_COLORS[liveFormation];
+        (material.uniforms.uColA.value as THREE.Color).setRGB(c[0], c[1], c[2]);
+        (material.uniforms.uColB.value as THREE.Color).setRGB(c[3], c[4], c[5]);
+        trailSystem.setColor(c[3] * 0.7, c[4] * 0.85, c[5] * 0.6);
       }
       formationTime += dt;
-
-      // Shader uniforms
-      material.uniforms.uTime.value = time;
-      material.uniforms.uSize.value = liveScale * 3.2;
+      material.uniforms.uTime.value  = time;
       material.uniforms.uFlash.value = Math.max(0, 1 - formationTime * 1.6);
 
-      // Bloom：随剑数自适应 + 呼吸脉冲（防止高数量过曝）
-      const bloomPulse = 1.0 + Math.sin(time * 2.0) * BLOOM_PULSE;
-      bloomPass.strength = BLOOM_BASE * bloomPulse * (1.0 - 0.35 * (liveCount / MAX_SWORDS));
+      // ── Bloom 呼吸脉动（v1.0 浓度回归，仅轻微随剑数回落防洗白） ──
+      bloomPass.strength = BLOOM_BASE * (1.0 + Math.sin(time * 2.0) * BLOOM_PULSE) * (1.0 - 0.18 * (liveCount / MAX_SWORDS));
 
-      // 星空缓转
       starfield.rotation.y += dt * 0.02;
       starfield.rotation.x += dt * 0.005;
 
-      // 光标平滑（0~1 → 世界坐标）
+      // ── 光标（0~1 → 世界坐标，EMA + 速度） ──
       const rawCx = (p.cursorX - 0.5) * WORLD_W;
       const rawCy = -(p.cursorY - 0.5) * WORLD_H;
-      const alpha = liveCursor ? 0.30 : 0.05;
-      smoothCx = smoothCx * (1 - alpha) + rawCx * alpha;
-      smoothCy = smoothCy * (1 - alpha) + rawCy * alpha;
-      const cursorVx = (smoothCx - prevCx) * 60;
-      const cursorVy = (smoothCy - prevCy) * 60;
+      const ka = p.cursorActive ? 0.28 : 0.05;
+      smoothCx += (rawCx - smoothCx) * ka;
+      smoothCy += (rawCy - smoothCy) * ka;
+      cursorVx = (smoothCx - prevCx) * 60; cursorVy = (smoothCy - prevCy) * 60;
       prevCx = smoothCx; prevCy = smoothCy;
-      const cursorSpeed = Math.hypot(cursorVx, cursorVy) + 0.01;
-      // 光标运动方向（归一化）
-      tmpVec1.set(cursorVx / cursorSpeed, cursorVy / cursorSpeed, 0);
-      if (cursorSpeed < 2.5) tmpVec1.set(1, 0, 0); // 静止时默认向右
+      const cSpeed = Math.hypot(cursorVx, cursorVy) + 0.01;
+      const dirX = cursorVx / cSpeed, dirY = cursorVy / cSpeed;
+      if (cSpeed < 2.5) { /* 静止：保持上一方向 */ }
 
-      // 剑群中心
       const cx = smoothCx, cy = smoothCy, cz = -120;
-      // 中心投影到屏幕（径向/切向朝向用）
-      centerNdc.set(cx, cy);
-      tmpVec3.set(cx, cy, cz).project(camera);
-      centerNdc.set(tmpVec3.x, tmpVec3.y * (width / height));
+      const zPush = (p.swordScale - SCALE_MIN) * 6; // 透视推近（v3.0 减弱版）
 
-      // 透视推近：剑越大越靠近摄像头（v3.0 减弱，防止巨大化）
-      const zPush = (liveScale - SCALE_MIN) * 10;
-
-      // 青元剑盾：盾栅微摆角
-      const giantRot = Math.sin(time * 0.8) * 0.06;
-
-      // 阵式过渡混合系数（0→1）
-      const modeBlend = Math.min(1, formationTime * 1.4);
-      const angleMode = FORMATION_ANGLE_MODE[liveFormation];
-
-      geom.instanceCount = liveCount;
-
-      for (let i = 0; i < liveCount; i++) {
+      // ── 逐剑：目标位置 + 物理 + 朝向 ──
+      for (let i = 0; i < MAX_SWORDS; i++) {
         const pt = particles[i];
         const seed = seedArr[i];
-        const ratio = i / liveCount;
 
-        // 数量增加时：新剑从远处游入（而非原地闪现）
+        if (i >= liveCount) {
+          // 场外收纳（v1.0：缩到极小而非移除，避免重建）
+          matrix.makeScale(0.001, 0.001, 0.001);
+          swordMesh.setMatrixAt(i, matrix);
+          attrVel.setXYZ(i, 0, 0, 0);
+          swordPosBuf[i*3+1] = -10000;
+          continue;
+        }
+
+        const ratio = i / liveCount;
+        // 数量增加：新剑从远方游入
         if (i >= prevCount) {
           pt.pos.set((Math.random() - 0.5) * 4200, (Math.random() - 0.5) * 3200, (Math.random() - 0.5) * 1800 - 400);
           pt.vel.set(0, 0, 0);
         }
 
-        // ── 目标位置 ──────────────────────────
-        let targetAlpha = 1;
+        let targetAlpha = 1.0;
+        let orientMode: 'velocity' | 'radial' | 'vertical' = 'velocity';
+
         switch (liveFormation) {
-          // 御剑巡空：大体积星域自由游弋（御剑飞行）
+          // ── 御剑巡空：Boids 群体智能（v1.0 五簇三力） ──
           case FormationState.IDLE: {
-            const R = 650 + Math.sqrt(liveCount) * 55;
-            const a = time * (0.22 + seed * 0.3) + seed * TAU + pt.offset;
-            const r = R * (0.35 + 0.65 * fract(seed * 7.31));
-            tmpVec2.set(
-              cx + Math.cos(a) * r,
-              cy + Math.sin(a * 0.9 + seed * 5.0) * r * 0.72,
-              cz + Math.sin(a * 0.7 + seed * 3.0) * 280,
-            );
+            const NUM_CLUSTERS = 5;
+            const per = Math.ceil(liveCount / NUM_CLUSTERS);
+            const cIdx = Math.floor(i / per);
+            const cAng = time * 0.22 + cIdx * Math.PI * 1.3;
+            const cRadX = 700 + Math.sin(time * 0.35 + cIdx * 0.7) * 400;
+            const cRadY = 400 + Math.cos(time * 0.4 + cIdx * 1.1) * 250;
+            const cZ = Math.cos(time * 0.25 + cIdx * 1.5) * 500 - 400;
+            const center = boidGet().set(Math.cos(cAng) * cRadX, Math.sin(cAng) * cRadY, cZ);
+
+            const sep = boidGet(), ali = boidGet(), coh = boidGet();
+            let nSep = 0, nAli = 0, nCoh = 0;
+            const s0 = cIdx * per, e0 = Math.min(s0 + per, liveCount);
+            for (let j = s0; j < e0; j++) {
+              if (j === i) continue;
+              const o = particles[j];
+              const dx = pt.pos.x - o.pos.x, dy = pt.pos.y - o.pos.y, dz = pt.pos.z - o.pos.z;
+              const d = Math.sqrt(dx*dx + dy*dy + dz*dz) + 0.001;
+              if (d < 160) { const w = 1/(d*d); sep.x += dx*w*800; sep.y += dy*w*800; sep.z += dz*w*800; nSep++; }
+              if (d < 350) { ali.x += o.vel.x; ali.y += o.vel.y; ali.z += o.vel.z; nAli++; }
+              if (d < 650) { coh.x += o.pos.x; coh.y += o.pos.y; coh.z += o.pos.z; nCoh++; }
+            }
+            const force = boidGet();
+            if (nSep > 0) force.add(sep.multiplyScalar(1.8));
+            if (nAli > 0) { ali.divideScalar(nAli); force.add(t1.copy(ali).sub(pt.vel).multiplyScalar(0.9)); }
+            if (nCoh > 0) { coh.divideScalar(nCoh); force.add(t1.copy(coh).sub(pt.pos).multiplyScalar(0.018)); }
+            const toC = t1.copy(center).sub(pt.pos);
+            force.add(t2.copy(toC).normalize().multiplyScalar(Math.min(toC.length() * 0.025, 70)));
+            if (Math.abs(pt.pos.x) > 2000) force.x -= Math.sign(pt.pos.x) * 60;
+            if (Math.abs(pt.pos.y) > 1400) force.y -= Math.sign(pt.pos.y) * 60;
+            if (Math.abs(pt.pos.z) > 1000) force.z -= Math.sign(pt.pos.z) * 40;
+            if (force.lengthSq() > 6400) force.normalize().multiplyScalar(80);
+            pt.acc.copy(force);
+            boidPut(sep); boidPut(ali); boidPut(coh); boidPut(force); boidPut(center);
+
+            pt.vel.addScaledVector(pt.acc, 0.016 * p.animSpeed);
+            const spd = pt.vel.length();
+            if (spd > 110) pt.vel.multiplyScalar(110 / spd);
+            else if (spd < VEL_MIN && spd > 0.01) pt.vel.multiplyScalar(VEL_MIN / spd);
+            pt.vel.multiplyScalar(0.978);
+            pt.pos.add(pt.vel);
             break;
           }
-          // 千丝绞杀：金丝织茧缠敌，从大网层层收紧（fist = 攥紧）
+
+          // ── 千丝绞杀：金丝织茧，高速缠绕层层收紧 ──
           case FormationState.THOUSAND_SILK: {
-            const tighten = 1.0 + 1.8 * Math.exp(-formationTime * 2.2);  // 切阵瞬间从大网收拢
-            const squeeze = 1.0 + 0.10 * Math.sin(formationTime * 4.0);  // 持续攥紧搏动
-            const R = (110 + 70 * fract(seed * 3.7)) * tighten * squeeze;
-            const spins = time * 2.6 + seed * TAU;                       // 每根丝高速缠绕
-            const band = Math.floor(ratio * 5);                          // 5 层丝带
-            tmpVec2.set(
+            const tighten = 1.0 + 1.8 * Math.exp(-formationTime * 2.2);
+            const squeeze = 1.0 + 0.10 * Math.sin(formationTime * 4.0);
+            const R = (300 + 160 * fract(seed * 3.7)) * tighten * squeeze;
+            const spins = time * 2.6 + seed * TAU;
+            const band = Math.floor(ratio * 5);
+            t1.set(
               cx + Math.cos(spins + band * 1.3) * R * (1 + band * 0.22),
               cy + Math.sin(spins * 1.3 + band * 0.9) * R * 0.85 * (1 + band * 0.18),
               cz + Math.sin(spins * 0.7 + seed * 6.0) * R * 0.9,
             );
             break;
           }
-          // 青元剑芒：群剑凝成一线剑芒，随手方向疾射
+
+          // ── 青元剑芒：龙脊一线（v1.0 龙形链式跟随 + 速度预测） ──
           case FormationState.SWORD_BEAM: {
-            const t = (i + 0.5) / liveCount;
-            const L = 700 + liveCount * 1.6;
-            const dx = tmpVec1.x, dy = tmpVec1.y;
-            const perpX = -dy, perpY = dx;
-            const wob = Math.sin(t * 20.0 - time * 9.0 + seed * 3.0);
-            const width = (6 + 14 * Math.sin(t * Math.PI)) * (0.4 + fract(seed * 5.1) * 0.6);
-            tmpVec2.set(
-              cx - dx * t * L + perpX * wob * width,
-              cy - dy * t * L + perpY * wob * width,
-              cz + Math.sin(t * 24.0 - time * 6.0 + seed * 6.0) * 26,
+            const t2r = (i + 0.5) / liveCount;
+            const L = 700 + liveCount * 1.4;
+            const perpX = -dirY, perpY = dirX;
+            const wob = Math.sin(t2r * 20.0 - time * 9.0 + seed * 3.0);
+            const width = (5 + 11 * Math.sin(t2r * Math.PI)) * (0.4 + fract(seed * 5.1) * 0.6);
+            t1.set(
+              cx - dirX * t2r * L + perpX * wob * width,
+              cy - dirY * t2r * L + perpY * wob * width,
+              cz + Math.sin(t2r * 24.0 - time * 6.0 + seed * 6.0) * 26,
             );
             break;
           }
-          // 剑影分光术：一实四虚五道剑影，扇形铺陈（动画分身名场面）
+
+          // ── 剑影分光术：一实四虚五道剑影 ──
           case FormationState.SWORD_SHADOW: {
             const lane = i % 5;
-            const baseAngle = Math.PI / 2 + (lane - 2) * 0.30; // 朝上扇形
+            const baseAngle = Math.PI / 2 + (lane - 2) * 0.30;
             const flow = fract(seed + time * 0.34 * (lane === 2 ? 1.0 : 0.72));
             const r = 130 + flow * 880;
             const spread = (fract(seed * 3.3) - 0.5) * (50 + flow * 100);
             const pa = baseAngle + Math.PI / 2;
-            tmpVec2.set(
+            t1.set(
               cx + Math.cos(baseAngle) * r + Math.cos(pa) * spread,
               cy + Math.sin(baseAngle) * r + Math.sin(pa) * spread,
               cz + (lane === 2 ? 110 : (lane - 2) * 85) + Math.sin(flow * 9.0 + lane) * 40,
             );
-            targetAlpha = lane === 2 ? 1.0 : 0.32; // 中央为实，余皆为影
+            targetAlpha = lane === 2 ? 1.0 : 0.32;
             break;
           }
-          // 青元剑盾：剑光成栅结盾，栅格微摆御敌
+
+          // ── 青元剑盾：剑光成栅 ──
           case FormationState.SWORD_SHIELD: {
             const cols = Math.max(3, Math.ceil(Math.sqrt(liveCount * 1.7)));
-            const row = Math.floor(i / cols);
-            const col = i % cols;
+            const row = Math.floor(i / cols), col = i % cols;
             const rows = Math.ceil(liveCount / cols);
-            const sx = (col - (cols - 1) / 2) * 58;
-            const sy = ((rows - 1) / 2 - row) * 58;
-            tmpVec2.set(
-              cx + sx + Math.sin(time * 2.2 + row * 0.6) * 10 * 0.4,
-              cy + sy + Math.sin(time * 2.0 + col * 0.5) * 8,
+            t1.set(
+              cx + (col - (cols - 1) / 2) * 58 + Math.sin(time * 2.2 + row * 0.6) * 4,
+              cy + ((rows - 1) / 2 - row) * 58 + Math.sin(time * 2.0 + col * 0.5) * 8,
               cz + 90 + Math.sin(row * 0.8 + col * 0.4) * 24,
             );
+            orientMode = 'vertical';
             break;
           }
-          // 大庚剑阵：万剑齐发，放射状中空剑球，切阵时从远方收拢
-          case FormationState.DAGENG_ARRAY: {
-            const converge = 1.0 + 1.6 * Math.exp(-formationTime * 2.6); // 切阵时从远处收拢
-            const R = (300 + 60 * Math.sin(formationTime * 1.8)) * converge;
-            fibDir(i, liveCount, fibTmp);
-            const swirl = time * 0.35 + seed * 0.15;
-            const cs = Math.cos(swirl), sn = Math.sin(swirl);
-            const fx = fibTmp.x * cs - fibTmp.z * sn;
-            const fz = fibTmp.x * sn + fibTmp.z * cs;
-            const shell = 0.88 + 0.30 * fract(seed * 2.7);
-            const breathe = 1.0 + Math.sin(time * 2.2 + seed * 20.0) * 0.035;
-            tmpVec2.set(
-              cx + fx * R * shell * breathe,
-              cy + fibTmp.y * R * shell * breathe,
-              cz + fz * R * shell * breathe,
-            );
-            break;
-          }
-          // 通天剑阵：紫金剑柱通天彻地 + 万道剑雨 + 紫雷沿柱穿梭
+
+          // ── 通天剑阵：紫金剑柱 + 剑雨 + 紫雷 ──
           case FormationState.TONGTIAN_ARRAY: {
-            const pillarX = (p: number) => cx + (p - 2) * 340;
+            const pillarX = (pp: number) => cx + (pp - 2) * 340;
             if (ratio < 0.62) {
-              // 剑柱：五根密集紫金光柱，悬停高频微颤
-              const p = Math.floor((ratio / 0.62) * 5);
-              tmpVec2.set(
-                pillarX(p) + Math.sin(time * 3.0 + seed * 40.0) * 6,
+              const pp = Math.floor((ratio / 0.62) * 5);
+              t1.set(
+                pillarX(pp) + Math.sin(time * 3.0 + seed * 40.0) * 6,
                 cy - 700 + fract(seed * 9.7) * 1400 + Math.sin(time * 4.0 + seed * 20.0) * 5,
                 cz + 120 + (fract(seed * 6.7) - 0.5) * 60,
               );
+              orientMode = 'vertical';
             } else if (ratio < 0.90) {
-              // 剑雨：沿柱位垂直落下，光轨拉满
-              const p = Math.floor(((ratio - 0.62) / 0.28) * 5);
+              const pp = Math.floor(((ratio - 0.62) / 0.28) * 5);
               const fall = fract(seed * 5.3 + time * (0.35 + fract(seed * 2.1) * 0.3));
-              tmpVec2.set(
-                pillarX(p) + Math.sin(time * 2.0 + seed * 30.0) * 12,
+              t1.set(
+                pillarX(pp) + Math.sin(time * 2.0 + seed * 30.0) * 12,
                 cy + 800 - fall * 1600,
                 cz + 120 + (fract(seed * 8.1) - 0.5) * 50,
               );
             } else {
-              // 紫雷：沿柱内高频窜动的竖向雷光（位置每 ~120ms 重随机，PD 冲刺天然成闪电）
-              const p = Math.floor(fract(seed * 4.3) * 5);
+              const pp = Math.floor(fract(seed * 4.3) * 5);
               const bt = Math.floor(time * 8.0) + Math.floor(seed * 97.0);
-              tmpVec2.set(
-                pillarX(p) + (fract(bt * 0.123 + seed * 7.0) - 0.5) * 80,
+              t1.set(
+                pillarX(pp) + (fract(bt * 0.123 + seed * 7.0) - 0.5) * 80,
                 cy + (fract(bt * 0.317 + seed * 3.0) - 0.5) * 1500,
                 cz + 180,
               );
             }
             break;
           }
+
+          // ── 大庚剑阵：万剑齐发放射剑球（真剑比例：半径按剑长放大） ──
+          case FormationState.DAGENG_ARRAY: {
+            const converge = 1.0 + 1.6 * Math.exp(-formationTime * 2.6);
+            const R = (760 + 60 * Math.sin(formationTime * 1.8)) * converge;
+            fibDir(i, liveCount, fibTmp);
+            const swirl = time * 0.35 + seed * 0.15;
+            const cs = Math.cos(swirl), sn = Math.sin(swirl);
+            const fx = fibTmp.x * cs - fibTmp.z * sn;
+            const fz = fibTmp.x * sn + fibTmp.z * cs;
+            const shell = 0.82 + 0.33 * fract(seed * 2.7);
+            const breathe = 1.0 + Math.sin(time * 2.2 + seed * 20.0) * 0.035;
+            t1.set(
+              cx + fx * R * shell * breathe,
+              cy + fibTmp.y * R * shell * breathe,
+              cz + fz * R * shell * breathe,
+            );
+            orientMode = 'radial';
+            break;
+          }
+
           default:
-            tmpVec2.set(cx, cy, cz);
+            t1.set(cx, cy, cz);
         }
-        targetAlpha *= 0.92 + seed * 0.08;
+
+        // ── 非_boids 物理：非线性 PD + 速度预测 + 有机摆动（v1.0） ──
+        if (liveFormation !== FormationState.IDLE) {
+          t1.z += zPush;
+          const frontRatio = ratio;
+          const predict = Math.max(0, 0.5 - frontRatio * 0.5) * 0.15;
+          t2.set(t1.x + cursorVx * predict, t1.y + cursorVy * predict, t1.z);
+
+          t3.copy(t2).sub(pt.pos);
+          const dist = t3.length();
+          const spring = Math.min(dist * dist * 0.001 + dist * PD_KP * p.animSpeed, PD_MAX_FORCE);
+          t3.normalize().multiplyScalar(spring);
+          t4.copy(pt.vel).multiplyScalar(PD_KD);
+          t3.sub(t4);
+          // 有机正弦摆动（游动感）
+          const waveAmp = 8.0 + (1 - frontRatio) * 12.0;
+          const waveF = time * 5.0 + pt.offset * 2.5;
+          t3.x += Math.sin(waveF) * waveAmp * 0.3;
+          t3.y += Math.cos(waveF * 0.7) * waveAmp * 0.3;
+          t3.z += Math.sin(waveF * 0.5 + 1.0) * waveAmp * 0.2;
+
+          pt.vel.addScaledVector(t3, 0.016 * p.animSpeed);
+          const spd = pt.vel.length();
+          const fr = Math.max(BASE_FRICTION - spd * 0.00008, 0.88);
+          pt.vel.multiplyScalar(fr);
+          if (spd > PD_VEL_MAX) pt.vel.multiplyScalar(PD_VEL_MAX / spd);
+          else if (spd < VEL_MIN && spd > 0.01) pt.vel.multiplyScalar(VEL_MIN / spd);
+          pt.pos.add(pt.vel);
+        }
+
+        // ── 剑刃朝向（真实 3D 四元数） ──
+        const spd2 = pt.vel.length();
+        if (orientMode === 'vertical') {
+          pt.quat.setFromAxisAngle(UP, Math.sin(time * 0.8) * 0.06);
+        } else if (orientMode === 'radial') {
+          t2.copy(pt.pos).sub(t3.set(cx, cy, cz)).normalize();
+          if (t2.lengthSq() < 0.5) t2.set(0, 1, 0);
+          pt.quat.setFromUnitVectors(UP, t2);
+        } else if (spd2 > 2) {
+          t2.copy(pt.vel).normalize();
+          pt.quat.setFromUnitVectors(UP, t2);
+        } // 低速 velocity 模式：保持上一朝向
+
+        scaleV.setScalar(p.swordScale);
+        matrix.compose(pt.pos, pt.quat, scaleV);
+        swordMesh.setMatrixAt(i, matrix);
+        attrVel.setXYZ(i, pt.vel.x, pt.vel.y, pt.vel.z);
+
+        // 虚实透明度平滑过渡
         alphaArr[i] += (targetAlpha - alphaArr[i]) * 0.1;
 
-        // 透视推近
-        const tx = tmpVec2.x, ty = tmpVec2.y, tz = tmpVec2.z + zPush;
-
-        // ── PD 控制器 ────────────────────────────
-        const ex = tx - pt.pos.x, ey = ty - pt.pos.y, ez = tz - pt.pos.z;
-        const dist = Math.hypot(ex, ey, ez);
-        const force = Math.min(dist * dist * 0.001 + dist * PD_KP_BASE * p.animSpeed, PD_MAX_FORCE);
-        const invD = 1 / Math.max(dist, 0.001);
-        pt.vel.x = (pt.vel.x + (ex * invD * force - pt.vel.x * PD_DAMPING) * 0.016) * PD_VEL_DECAY;
-        pt.vel.y = (pt.vel.y + (ey * invD * force - pt.vel.y * PD_DAMPING) * 0.016) * PD_VEL_DECAY;
-        pt.vel.z = (pt.vel.z + (ez * invD * force - pt.vel.z * PD_DAMPING) * 0.016) * PD_VEL_DECAY;
-
-        // 速度限幅
-        const sp = Math.hypot(pt.vel.x, pt.vel.y, pt.vel.z);
-        if (sp > PD_VEL_MAX) {
-          const k = PD_VEL_MAX / sp;
-          pt.vel.x *= k; pt.vel.y *= k; pt.vel.z *= k;
-        } else if (sp < PD_VEL_MIN && sp > 0.01) {
-          const k = PD_VEL_MIN / sp;
-          pt.vel.x *= k; pt.vel.y *= k; pt.vel.z *= k;
-        }
-
-        pt.pos.x += pt.vel.x;
-        pt.pos.y += pt.vel.y;
-        pt.pos.z += pt.vel.z;
-
-        // ── 屏幕投影：速度方向 / 拉伸 ─────────────
-        tmpVec4.copy(pt.pos).project(camera);
-        const sx = tmpVec4.x, sy = tmpVec4.y * (width / height);
-        const psIdx = i * 2;
-        let screenSpeed = 0;
-        let velAngle = angleArr[i];
-        if (!Number.isNaN(prevScreen[psIdx])) {
-          const sdx = sx - prevScreen[psIdx];
-          const sdy = sy - prevScreen[psIdx + 1];
-          screenSpeed = Math.hypot(sdx, sdy);
-          if (screenSpeed > 0.0015) {
-            velAngle = Math.atan2(sdy, sdx) + Math.PI / 2; // 剑刃指向运动方向
-          }
-        }
-        prevScreen[psIdx] = sx;
-        prevScreen[psIdx + 1] = sy;
-
-        // ── 屏幕空间朝向（按阵式模式） ─────────────
-        let targetAngle = velAngle;
-        if (angleMode === AngleMode.RADIAL) {
-          const rdx = sx - centerNdc.x, rdy = sy - centerNdc.y;
-          if (Math.hypot(rdx, rdy) > 0.002) targetAngle = Math.atan2(rdy, rdx) + Math.PI / 2;
-        } else if (angleMode === AngleMode.TANGENT) {
-          const rdx = sx - centerNdc.x, rdy = sy - centerNdc.y;
-          if (Math.hypot(rdx, rdy) > 0.002) targetAngle = Math.atan2(rdy, rdx); // 切向 = 径向 + 90°
-        } else if (angleMode === AngleMode.FIXED) {
-          targetAngle = giantRot; // 盾栅/剑柱：剑刃竖直（巨剑时代的 +PI/2 横躺已随巨剑术移除）
-        } else if (angleMode === AngleMode.FLOW) {
-          targetAngle = Math.atan2(tmpVec1.y, tmpVec1.x) + Math.PI / 2; // 剑刃沿剑河流向
-        }
-        targetAngle += Math.sin(time * 3.0 + seed * 40.0) * 0.06; // 有机微摆
-        angleArr[i] = blendAngle(angleArr[i], targetAngle, modeBlend * 0.35 + 0.05);
-
-        // ── 速度拉伸（流光拖尾） ──────────────────
-        const targetStretch = 1.0 + Math.min(screenSpeed * 42.0, 2.4);
-        prevStretch[i] += (targetStretch - prevStretch[i]) * 0.25;
-        stretchArr[i] = prevStretch[i];
-
-        // 写入实例属性
-        posArr[i * 3] = pt.pos.x;
-        posArr[i * 3 + 1] = pt.pos.y;
-        posArr[i * 3 + 2] = pt.pos.z;
+        swordPosBuf[i*3] = pt.pos.x; swordPosBuf[i*3+1] = pt.pos.y; swordPosBuf[i*3+2] = pt.pos.z;
       }
 
       prevCount = liveCount;
-      attrPos.needsUpdate = true;
-      attrAngle.needsUpdate = true;
-      attrStretch.needsUpdate = true;
+      swordMesh.instanceMatrix.needsUpdate = true;
+      attrVel.needsUpdate = true;
       attrAlpha.needsUpdate = true;
 
+      trailSystem.update(swordPosBuf, liveCount, dt);
       composer.render();
       rafId = requestAnimationFrame(loop);
     };
     loop();
 
-    // ── Resize ───────────────────────────────────
+    // ── Resize ──
     const onResize = () => {
-      if (!container) return;
       const w = container.clientWidth, h = container.clientHeight;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
@@ -691,14 +775,14 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
       window.removeEventListener('resize', onResize);
       try {
         renderer.dispose(); composer.dispose();
-        geom.dispose(); baseQuad.dispose(); material.dispose();
+        geom.dispose(); material.dispose();
         bgGeom.dispose(); bgMat.dispose();
+        starfield.geometry.dispose(); (starfield.material as THREE.Material).dispose();
+        trailSystem.points.geometry.dispose(); (trailSystem.points.material as THREE.Material).dispose();
+        if (container && renderer.domElement) container.removeChild(renderer.domElement);
       } catch { /* noop */ }
-      starfield.geometry.dispose();
-      (starfield.material as any).dispose();
-      if (container && renderer.domElement) container.removeChild(renderer.domElement);
     };
-  }, []);  // 一次性 mount，用 ref 控制参数
+  }, []);
 
   return <div ref={mountRef} className="w-full h-full" />;
 };
