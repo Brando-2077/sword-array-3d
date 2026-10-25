@@ -105,8 +105,10 @@ const DEBUG_PANEL = true;
 
 const VIRTUAL_CAM_RE = /droidcam|virtual|e2esoft|manycam|obs|snap camera/i;
 
-// MediaPipe 官方约定：标签按镜像输入判定，我们送原始帧 → 需对调。
-// 默认对调；摄像头行为不同时用面板上的「⇄ 左右互换」一键纠正（localStorage 记忆）。
+// MediaPipe 官方约定：标签按镜像输入判定，我们送原始帧。
+// 本机实测（2026-10-26 用户确认为准）：不对调，label 'Right' 即用户右手。
+// ⚠️ 用户明确要求：不要再提供左右互换功能，此方向已锁定。
+const SWAP_HANDEDNESS = false;
 
 // ─── 21 点手骨拓扑（官方 HAND_CONNECTIONS） ─────────
 const HAND_CONNECTIONS: [number, number][] = [
@@ -206,12 +208,6 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
   const [dbg, setDbg] = useState<{ l: string; r: string }>({ l: '', r: '' });
   const dbgRef = useRef({ t: 0 });
 
-  // 左右手判定方向（可一键互换，localStorage 记忆）
-  const [swapHands, setSwapHands] = useState<boolean>(() => {
-    try { return localStorage.getItem('dageng-swap-hands') !== '0'; } catch { return true; }
-  });
-  const swapRef = useRef(swapHands);
-
   // 派生稳定状态
   const stableRef = useRef({ scale: 15, count: 72, speed: 0.75, locked: false });
   const smoothScale = useRef({ v: 15 });
@@ -265,7 +261,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
       let leftIdx = -1, rightIdx = -1;
       for (let i = 0; i < nHands; i++) {
         const label = result.handedness?.[i]?.[0]?.categoryName || result.handedness?.[i]?.[0]?.displayName;
-        const isUserRight = swapRef.current ? label === 'Left' : label === 'Right';
+        const isUserRight = SWAP_HANDEDNESS ? label === 'Left' : label === 'Right';
         if (isUserRight && rightIdx < 0) rightIdx = i;
         else if (!isUserRight && leftIdx < 0) leftIdx = i;
       }
@@ -495,18 +491,6 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
                 换摄像头 {camIdx + 1}/{cameras.length}
               </button>
             )}
-            <button
-              onClick={() => setSwapHands((v) => {
-                const nv = !v;
-                swapRef.current = nv;
-                try { localStorage.setItem('dageng-swap-hands', nv ? '1' : '0'); } catch { /* noop */ }
-                return nv;
-              })}
-              title="左右手识别反了？点此互换"
-              className="absolute bottom-2 left-2 pointer-events-auto px-2 py-0.5 bg-black/60 border border-amber-400/40 rounded text-[9px] text-amber-300/90 tracking-widest font-bold hover:bg-amber-500/20 transition-colors"
-            >
-              ⇄ 左右互换
-            </button>
           </>
         )}
       </div>
