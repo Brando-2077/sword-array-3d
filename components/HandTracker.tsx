@@ -115,10 +115,13 @@ function fingerMetrics(world: WLM[]): { ratios: number[]; thumbRatio: number; th
   return { ratios, thumbRatio, thumbSep, angles };
 }
 
-// 阈值（滞回：ext_on / ext_off）
-const RATIO_EXT = 0.80, RATIO_CURL = 0.62;          // 四指伸直度
-const THUMB_RATIO_EXT = 0.74, THUMB_RATIO_CURL = 0.56; // 拇指伸直度
-const THUMB_SEP_EXT = 0.85, THUMB_SEP_CURL = 0.60;  // 拇指分离度（伸直需分离够大）
+// 阈值（每指独立，标定自用户 2026-10-26 真实手部数据日志；滞回：ext_on / ext_off）
+const RATIO_EXT = [0, 0.67, 0.63, 0.76, 0.73];   // 四指伸直阈值（食/中/无/小）
+const RATIO_CURL = [0, 0.52, 0.48, 0.61, 0.58];  // 四指弯曲阈值
+// 拇指：伸直度比值在收拢/张开两种姿态下重叠（0.59~0.67 vs 0.61~0.67），已弃用；
+// 改用分离度（拇指尖↔食指根 ÷ 掌长）：收拢实测 0.52~0.68、张开实测 0.79
+// 拇指仅在四指全伸时参与判定（区分 👍36 与 👋72），其余档位不受拇指影响
+const THUMB_SEP_ON = 0.74, THUMB_SEP_OFF = 0.70;
 
 // ─── 单手状态机：五指滞回 + 手指数时序投票 + 掌心/测距平滑 ──
 class HandState {
@@ -137,14 +140,15 @@ class HandState {
   update(m: { ratios: number[]; thumbRatio: number; thumbSep: number; angles: number[] }, norm: WLM[], nowMs: number): {
     count: number; x: number; y: number; distance: number; distCm: number; normSm: WLM[];
   } {
-    // 五指滞回判定（伸直度比值 + 拇指分离度复合，全部旋转/朝向无关）
+    // 五指滞回判定：四指各用独立阈值；拇指仅用分离度、且只在四指全伸时计 1
     for (let f = 0; f < 4; f++) {
       const r = m.ratios[f];
-      if (!this.ext[f + 1] && r > RATIO_EXT) this.ext[f + 1] = true;
-      else if (this.ext[f + 1] && r < RATIO_CURL) this.ext[f + 1] = false;
+      if (!this.ext[f + 1] && r > RATIO_EXT[f + 1]) this.ext[f + 1] = true;
+      else if (this.ext[f + 1] && r < RATIO_CURL[f + 1]) this.ext[f + 1] = false;
     }
-    if (!this.ext[0] && m.thumbRatio > THUMB_RATIO_EXT && m.thumbSep > THUMB_SEP_EXT) this.ext[0] = true;
-    else if (this.ext[0] && (m.thumbRatio < THUMB_RATIO_CURL || m.thumbSep < THUMB_SEP_CURL)) this.ext[0] = false;
+    const fourCount = this.ext.reduce((n, e, i) => n + (i > 0 && e ? 1 : 0), 0);
+    if (!this.ext[0] && fourCount === 4 && m.thumbSep > THUMB_SEP_ON) this.ext[0] = true;
+    else if (this.ext[0] && m.thumbSep < THUMB_SEP_OFF) this.ext[0] = false;
     const rawCount = this.ext.reduce((n, e) => n + (e ? 1 : 0), 0);
 
     // 手指数时序投票
@@ -548,7 +552,7 @@ function analyze(
       thumbSep: +metrics.thumbSep.toFixed(2),
       google: result.gestures?.[idx]?.[0]?.categoryName ?? 'None',
     });
-    if (w.__FINGERLOG.length > 300) w.__FINGERLOG.splice(0, w.__FINGERLOG.length - 300);
+    if (w.__FINGERLOG.length > 3000) w.__FINGERLOG.splice(0, w.__FINGERLOG.length - 3000);
   } catch { /* noop */ }
 
   return {
