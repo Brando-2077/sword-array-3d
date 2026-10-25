@@ -25,6 +25,9 @@ export interface HandTrackerProps {
   onUpdate: (data: InteractionData) => void;
 }
 
+// 虚拟摄像头特征（DroidCam/OBS/ManyCam 等）：自动选摄像头时跳过，避免拿到未推流的占位画面
+const VIRTUAL_CAM_RE = /droidcam|virtual|e2esoft|manycam|obs|snap camera/i;
+
 // ─── 常量配置 ───────────────────────────────────────
 const MODEL_URL        = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const WASM_BASE        = '/node_modules/@mediapipe/tasks-vision/wasm';
@@ -133,6 +136,12 @@ const HandTracker: any = ({ onUpdate }: HandTrackerProps) => {
 
   const [status, setStatus]     = useState<HandTrackerStatus>('loading');
   const [errorMsg, setErrorMsg] = useState<string>('');
+  const [cameras, setCameras]   = useState<MediaDeviceInfo[]>([]);
+  const [camIdx, setCamIdx]     = useState(0);
+  const camIdxRef = useRef(0);
+  const videoConstraints = {
+    width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 },
+  };
 
   // 稳定状态
   const stableRef = useRef({
@@ -249,10 +258,23 @@ const HandTracker: any = ({ onUpdate }: HandTrackerProps) => {
     // 启动流程
     const start = async () => {
       try {
-        // 1) 初始化摄像头
+        // 1) 先用空约束触发权限（未授权时设备 label 为空），拿到授权后停止探针流
         if (!navigator.mediaDevices?.getUserMedia) throw new Error('浏览器不支持 getUserMedia');
+        const probe = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        probe.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+
+        // 2) 枚举摄像头，优先实体摄像头（跳过 DroidCam 等虚拟设备的占位画面）
+        const allCams = (await navigator.mediaDevices.enumerateDevices())
+          .filter((d: MediaDeviceInfo) => d.kind === 'videoinput');
+        if (allCams.length === 0) throw Object.assign(new Error('未检测到摄像头设备'), { name: 'NotFoundError' });
+        const preferred = allCams.find((d: MediaDeviceInfo) => !VIRTUAL_CAM_RE.test(d.label)) ?? allCams[0];
+        setCameras(allCams);
+        camIdxRef.current = Math.max(0, allCams.indexOf(preferred));
+        setCamIdx(camIdxRef.current);
+
+        // 3) 用选中的设备正式开流
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
+          video: { deviceId: { exact: preferred.deviceId }, ...videoConstraints },
           audio: false,
         });
         streamRef.current = stream;
@@ -313,6 +335,28 @@ const HandTracker: any = ({ onUpdate }: HandTrackerProps) => {
   const calibrators = useRef({ L: new DistanceCalibrator(), R: new DistanceCalibrator() });
   const debouncers = useRef({ L: new FingerDebouncer(), R: new FingerDebouncer() });
 
+  // 手动切换摄像头：停掉当前流换下一个设备重开（识别器直接读 video 帧，无需重建）
+  const switchCamera = async () => {
+    if (cameras.length < 2) return;
+    const next = (camIdxRef.current + 1) % cameras.length;
+    camIdxRef.current = next;
+    setCamIdx(next);
+    try {
+      streamRef.current?.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: cameras[next].deviceId }, ...videoConstraints },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => { /* 已有用户手势与授权，忽略 */ });
+      }
+    } catch (e) {
+      console.warn('[HandTracker] 切换摄像头失败:', e);
+    }
+  };
+
   return (
     <div className="fixed bottom-12 right-12 z-50 pointer-events-none select-none">
       <div className={`w-[320px] aspect-[4/3] rounded-2xl overflow-hidden border-2 backdrop-blur-md transition-colors duration-500 relative ${
@@ -348,6 +392,15 @@ const HandTracker: any = ({ onUpdate }: HandTrackerProps) => {
             <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-emerald-500/20 border border-emerald-400/40 rounded text-[9px] text-emerald-300/90 tracking-widest font-bold">
               LIVE
             </div>
+            {cameras.length > 1 && (
+              <button
+                onClick={switchCamera}
+                title={cameras[camIdx]?.label || '切换摄像头'}
+                className="absolute bottom-2 right-2 pointer-events-auto px-2 py-0.5 bg-black/60 border border-emerald-400/40 rounded text-[9px] text-emerald-300/90 tracking-widest font-bold hover:bg-emerald-500/20 transition-colors"
+              >
+                换摄像头 {camIdx + 1}/{cameras.length}
+              </button>
+            )}
           </>
         )}
       </div>
