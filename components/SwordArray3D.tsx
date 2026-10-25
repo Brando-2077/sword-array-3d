@@ -42,8 +42,8 @@ const MAX_SWORDS   = 3600;      // 万剑剑丝（原著剑影分光之极）
 const BOIDS_MAX    = 512;       // Boids 群体智能上限（O(n²)，超限转参数化游弋）
 const WORLD_W      = 2800;
 const WORLD_H      = 2000;
-const BLOOM_BASE   = 0.85;      // v1.0 手感：只让高亮核心泛光，集群不糊成灯泡
-const BLOOM_PULSE  = 0.12;
+const BLOOM_BASE   = 0.52;      // 亮度再降：低泛光保剑身可读
+const BLOOM_PULSE  = 0.10;
 const STAR_COUNT   = 1600;
 const TAU          = Math.PI * 2;
 const GOLDEN       = 2.39996323;
@@ -58,13 +58,13 @@ const BASE_FRICTION = 0.955;
 
 // ─── 剑色方案（A 暗基 → B 亮色；金雷弧始终保留金） ──
 const FORMATION_COLORS: Record<FormationState, number[]> = {
-  [FormationState.IDLE]:           [0.05, 0.30, 0.15,  0.30, 1.00, 0.50],
-  [FormationState.THOUSAND_SILK]:  [0.34, 0.24, 0.05,  1.00, 0.84, 0.34],
-  [FormationState.SWORD_BEAM]:     [0.04, 0.40, 0.18,  0.42, 1.00, 0.62],
-  [FormationState.SWORD_SHADOW]:   [0.03, 0.32, 0.16,  0.34, 0.95, 0.60],
-  [FormationState.SWORD_SHIELD]:   [0.03, 0.30, 0.18,  0.36, 0.98, 0.72],
-  [FormationState.TONGTIAN_ARRAY]: [0.13, 0.07, 0.28,  0.72, 0.58, 1.00],
-  [FormationState.DAGENG_ARRAY]:   [0.14, 0.28, 0.08,  0.92, 0.98, 0.45],
+  [FormationState.IDLE]:           [0.02, 0.24, 0.11,  0.26, 0.95, 0.45],
+  [FormationState.THOUSAND_SILK]:  [0.30, 0.21, 0.04,  0.95, 0.80, 0.30],
+  [FormationState.SWORD_BEAM]:     [0.03, 0.36, 0.16,  0.36, 1.00, 0.58],
+  [FormationState.SWORD_SHADOW]:   [0.02, 0.30, 0.15,  0.30, 0.90, 0.55],
+  [FormationState.SWORD_SHIELD]:   [0.02, 0.28, 0.16,  0.30, 0.92, 0.62],
+  [FormationState.TONGTIAN_ARRAY]: [0.12, 0.06, 0.26,  0.68, 0.55, 1.00],
+  [FormationState.DAGENG_ARRAY]:   [0.11, 0.24, 0.07,  0.82, 0.92, 0.42],
 };
 
 // ─── 青竹蜂云剑 Shader（v1.0 材质 + 阵式色参数化 + 虚实/种子实例属性） ──
@@ -127,10 +127,10 @@ const swordFragmentShader = /* glsl */ `
   }
 
   void main() {
-    // 色板：v1.0 青竹蜂云剑（提亮适度——加法混合下多剑叠加会自增亮，宁欠勿过）
+    // 色板：青竹蜂云剑——绿金相间（竹节分段交替染金/玉绿），整体压暗
     vec3 jadeCore  = uColA;
-    vec3 jadeMid   = mix(uColA, uColB, 0.65) * 1.10;
-    vec3 jadeGlow  = uColB * 1.05;
+    vec3 jadeMid   = mix(uColA, uColB, 0.65) * 0.88;
+    vec3 jadeGlow  = uColB * 0.82;
     vec3 goldAccent = vec3(1.0, 0.72, 0.15);
     vec3 goldEdge  = vec3(1.0, 0.85, 0.25);
 
@@ -143,9 +143,11 @@ const swordFragmentShader = /* glsl */ `
     float alpha = vAlpha;
 
     if (isBlade) {
-      // ── 竹节环纹（细脊线，每 ~3.2 单位一道，参考图刃上分段线） ──
-      float nodePhase = (vHeight - 0.9) / 3.2;
-      float nodeFrac = fract(nodePhase);
+      // ── 竹节分段：绿金相间（偶数段玉绿、奇数段染金）+ 节环金线 ──
+      float segPos = (vHeight - 0.9) / 4.2;
+      float segIdx = floor(segPos);
+      float nodeFrac = fract(segPos);
+      float goldSeg = step(0.5, mod(segIdx, 2.0));
       float nodeGlow = smoothstep(0.0, 0.06, nodeFrac) * smoothstep(0.14, 0.08, nodeFrac);
       nodeGlow = 1.0 - nodeGlow;
       float ring = smoothstep(0.0, 0.015, nodeFrac) * smoothstep(0.03, 0.015, nodeFrac);
@@ -153,17 +155,19 @@ const swordFragmentShader = /* glsl */ `
       float heightGrad = smoothstep(0.9, 23.0, vHeight);
       baseColor = mix(jadeCore, jadeMid, heightGrad * 0.7);
       baseColor = mix(baseColor, jadeGlow, ring * 0.30);
-      baseColor = mix(baseColor, goldAccent * 0.5, ring * 0.12);
+      // 相间染色：金段明确染金，玉段保持饱和翠绿
+      baseColor = mix(baseColor, goldAccent * 1.15, goldSeg * 0.72);
+      baseColor = mix(baseColor, goldAccent * 0.8, ring * 0.35);
 
       float lateral = abs(vUv.x - 0.5) * 2.0;
       baseColor = mix(baseColor, jadeCore * 0.6, smoothstep(0.3, 0.85, lateral) * 0.4);
-      baseColor = mix(baseColor, jadeGlow, smoothstep(21.0, 25.0, vHeight) * 0.55);
+      baseColor = mix(baseColor, jadeGlow, smoothstep(21.0, 25.0, vHeight) * 0.45);
 
-      // ── 中脊线（汉剑血槽样式：中央亮脊 + 两侧暗槽）+ 玉白刃缘 ──
+      // ── 中脊线（汉剑血槽：中央微亮脊 + 两侧暗槽）+ 玉白刃缘（弱） ──
       float ridge = 1.0 - smoothstep(0.0, 0.14, abs(vUv.x - 0.5));
-      baseColor += jadeGlow * ridge * 0.42;
+      baseColor += jadeGlow * ridge * 0.22;
       baseColor *= 1.0 - (smoothstep(0.10, 0.22, abs(vUv.x - 0.5)) - smoothstep(0.22, 0.30, abs(vUv.x - 0.5))) * 0.18;
-      baseColor = mix(baseColor, vec3(0.72, 1.0, 0.84), smoothstep(0.68, 0.94, lateral) * 0.30);
+      baseColor = mix(baseColor, vec3(0.55, 0.92, 0.70), smoothstep(0.68, 0.94, lateral) * 0.12);
 
       // ── 金色雷电弧（三频噪声，只出现在剑缘与竹节） ──
       float lx = vUv.x * 8.0 + vSeed * 13.0;
@@ -392,7 +396,7 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
+    renderer.toneMappingExposure = 0.95;
     container.appendChild(renderer.domElement);
 
     const composer = new EffectComposer(renderer);
