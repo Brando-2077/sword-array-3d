@@ -89,8 +89,8 @@ const swordVertexShader = /* glsl */ `
     vSeed = aSeed;
 
     vec3 pos = position;
-    // 高速拉伸（v1.0 液态流动感）
-    if (pos.y > 0.0) pos.y += clamp(speed * 0.40, 0.0, 12.0);
+    // 高速拉伸（v1.0 液态流动感）——只拉伸刃段，护手/柄不变形
+    if (pos.y > 0.9) pos.y += clamp(speed * 0.40, 0.0, 12.0);
 
     vec4 instancePosition = instanceMatrix * vec4(pos, 1.0);
     vec3 worldNormal = normalize(mat3(instanceMatrix) * normal);
@@ -134,28 +134,36 @@ const swordFragmentShader = /* glsl */ `
     vec3 goldAccent = vec3(1.0, 0.72, 0.15);
     vec3 goldEdge  = vec3(1.0, 0.85, 0.25);
 
-    bool isBlade = vHeight > 0.15;
-    bool isTip   = vHeight > 21.0;
+    bool isBlade = vHeight > 0.9;
+    bool isTip   = vHeight > 22.5;
+    bool isGuard = vHeight <= 0.9 && vHeight > -0.95;
+    bool isPommel = vHeight <= -5.75;
 
     vec3 baseColor;
     float alpha = vAlpha;
 
     if (isBlade) {
-      // ── 竹节环纹（每 ~3.5 单位一节） ──
-      float nodePhase = vHeight / 3.5;
+      // ── 竹节环纹（细脊线，每 ~3.2 单位一道，参考图刃上分段线） ──
+      float nodePhase = (vHeight - 0.9) / 3.2;
       float nodeFrac = fract(nodePhase);
       float nodeGlow = smoothstep(0.0, 0.06, nodeFrac) * smoothstep(0.14, 0.08, nodeFrac);
       nodeGlow = 1.0 - nodeGlow;
       float ring = smoothstep(0.0, 0.015, nodeFrac) * smoothstep(0.03, 0.015, nodeFrac);
 
-      float heightGrad = smoothstep(0.15, 24.0, vHeight);
+      float heightGrad = smoothstep(0.9, 23.0, vHeight);
       baseColor = mix(jadeCore, jadeMid, heightGrad * 0.7);
-      baseColor = mix(baseColor, jadeGlow, ring * 0.35);
-      baseColor = mix(baseColor, goldAccent * 0.5, ring * 0.15);
+      baseColor = mix(baseColor, jadeGlow, ring * 0.30);
+      baseColor = mix(baseColor, goldAccent * 0.5, ring * 0.12);
 
       float lateral = abs(vUv.x - 0.5) * 2.0;
       baseColor = mix(baseColor, jadeCore * 0.6, smoothstep(0.3, 0.85, lateral) * 0.4);
-      baseColor = mix(baseColor, jadeGlow, smoothstep(22.0, 26.0, vHeight) * 0.6);
+      baseColor = mix(baseColor, jadeGlow, smoothstep(21.0, 25.0, vHeight) * 0.55);
+
+      // ── 中脊线（汉剑血槽样式：中央亮脊 + 两侧暗槽）+ 玉白刃缘 ──
+      float ridge = 1.0 - smoothstep(0.0, 0.14, abs(vUv.x - 0.5));
+      baseColor += jadeGlow * ridge * 0.42;
+      baseColor *= 1.0 - (smoothstep(0.10, 0.22, abs(vUv.x - 0.5)) - smoothstep(0.22, 0.30, abs(vUv.x - 0.5))) * 0.18;
+      baseColor = mix(baseColor, vec3(0.72, 1.0, 0.84), smoothstep(0.68, 0.94, lateral) * 0.30);
 
       // ── 金色雷电弧（三频噪声，只出现在剑缘与竹节） ──
       float lx = vUv.x * 8.0 + vSeed * 13.0;
@@ -172,14 +180,18 @@ const swordFragmentShader = /* glsl */ `
       // 剑身能量脉动
       float pulse = sin(uTime * 8.0 + vHeight * 0.4 + vSeed * 6.28) * 0.5 + 0.5;
       baseColor += jadeGlow * pulse * edgeMask * 0.15;
+    } else if (isGuard) {
+      // ── 剑格：小圆盘，金边玉心（参考图 1 的金环盘） ──
+      baseColor = mix(goldAccent * 1.7, jadeMid, smoothstep(0.2, 0.8, abs(vUv.x - 0.5) * 2.0) * 0.5);
+      baseColor *= 0.9 + 0.1 * sin(uTime * 4.0 + vSeed * 6.28);
+    } else if (isPommel) {
+      // ── 剑首：金帽 ──
+      baseColor = goldEdge * 1.4;
     } else {
-      // ── 剑柄 / 护手：暗竹柄金缠纹 ──
-      float hiltRing = smoothstep(-0.85, -0.75, vHeight) * smoothstep(-0.65, -0.75, vHeight);
-      float guardTop = smoothstep(-0.05, 0.15, vHeight);
-      baseColor = mix(jadeCore * 0.5, goldAccent, hiltRing * 0.8);
-      baseColor = mix(baseColor, goldEdge * 1.5, guardTop * 0.6);
-      float wrapPattern = abs(sin(vHeight * 3.0 + vUv.x * 15.0));
-      baseColor = mix(baseColor, goldAccent * 1.3, wrapPattern * smoothstep(-6.0, -1.0, vHeight) * 0.3);
+      // ── 剑柄：深玉缠绳（斜纹） ──
+      baseColor = mix(jadeCore * 0.55, jadeMid * 0.8, smoothstep(-6.3, -0.9, vHeight) * 0.4);
+      float wrapPattern = abs(sin(vHeight * 4.2 + vUv.x * 18.0));
+      baseColor = mix(baseColor, goldAccent * 1.1, wrapPattern * 0.35);
     }
 
     // ── 菲涅尔描金 + 速度辉光 ──
@@ -310,34 +322,37 @@ function createTrailParticles(maxSwords: number): {
   };
 }
 
-// ─── 青竹蜂云剑几何（v1.0 原形：竹刃 + 翼形护手 + 竹柄） ──
+// ─── 青竹蜂云剑几何（按动画参考图重制：汉剑形制） ──
+// 细长直刃（带中脊）+ 小圆盘剑格 + 长柄 + 圆形剑首；动画原图比例 刃:柄 ≈ 3.5:1
 function createSwordGeometry(): THREE.ExtrudeGeometry {
-  const shape = new THREE.Shape();
-  // 柄：竹节微收
-  shape.moveTo(-0.35, -7.0);
-  shape.lineTo(0.35, -7.0);
-  shape.lineTo(0.22, -1.2);
-  shape.lineTo(-0.22, -1.2);
-  shape.lineTo(-0.35, -7.0);
-  // 护手：翼形贝塞尔
-  shape.moveTo(-1.6, -1.2);
-  shape.lineTo(1.6, -1.2);
-  shape.lineTo(1.8, -0.5);
-  shape.bezierCurveTo(1.2, -0.35, 0.8, 0.0, 0.35, 0.15);
-  shape.lineTo(-0.35, 0.15);
-  shape.bezierCurveTo(-0.8, 0.0, -1.2, -0.35, -1.8, -0.5);
-  shape.lineTo(-1.6, -1.2);
-  // 剑刃：竹刃缓收至尖
-  const bladeLen = 26.0;
-  shape.moveTo(-0.25, 0.15);
-  shape.lineTo(0.25, 0.15);
-  shape.bezierCurveTo(0.25, 4.0, 0.22, 12.0, 0.06, bladeLen - 2.0);
-  shape.lineTo(0.0, bladeLen + 1.5);
-  shape.lineTo(-0.06, bladeLen - 2.0);
-  shape.bezierCurveTo(-0.22, 12.0, -0.25, 4.0, -0.25, 0.15);
-  return new THREE.ExtrudeGeometry(shape, {
-    depth: 0.4, bevelEnabled: true, bevelThickness: 0.15, bevelSize: 0.15, bevelSegments: 3,
-  }).scale(1.6, 1, 1); // 加宽剑身：50:1 针状 → 31:1 剑形（针状在画面里就是根线）
+  const s = new THREE.Shape();
+  // 剑首（圆帽，y -7.2 ~ -6.35）
+  s.moveTo(-0.30, -7.2);
+  s.quadraticCurveTo(-0.52, -6.85, -0.44, -6.35);
+  // 柄（y -6.35 ~ -0.85，微收）
+  s.lineTo(-0.34, -5.7);
+  s.lineTo(-0.30, -0.85);
+  // 剑格（小圆盘侧影：左右探出的圆弧透镜）
+  s.lineTo(-0.95, -0.55);
+  s.quadraticCurveTo(-1.15, 0.15, -0.92, 0.8);
+  s.lineTo(-0.42, 0.95);
+  // 刃（y 0.95 ~ 25.4，直刃缓收，末段收锋）
+  s.lineTo(-0.46, 22.0);
+  s.quadraticCurveTo(-0.38, 24.4, -0.01, 25.4);
+  s.lineTo(0.01, 25.4);
+  s.quadraticCurveTo(0.38, 24.4, 0.46, 22.0);
+  s.lineTo(0.46, 0.95);
+  // 右侧镜像
+  s.lineTo(0.92, 0.8);
+  s.quadraticCurveTo(1.15, 0.15, 0.95, -0.55);
+  s.lineTo(0.30, -0.85);
+  s.lineTo(0.34, -5.7);
+  s.lineTo(0.44, -6.35);
+  s.quadraticCurveTo(0.52, -6.85, 0.30, -7.2);
+  s.closePath();
+  return new THREE.ExtrudeGeometry(s, {
+    depth: 0.16, bevelEnabled: true, bevelThickness: 0.1, bevelSize: 0.1, bevelSegments: 2,
+  }).scale(1.6, 1, 1.3); // x 加宽保剑面可读，z 加厚出剑脊体积
 }
 
 // ─── 工具 ─────────────────────────────────────────
