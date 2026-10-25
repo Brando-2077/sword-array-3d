@@ -63,7 +63,8 @@ const GESTURE_CN: Record<string, string> = {
 // ─── 测距参数（几何法，与手势无关） ────────────────
 const PALM_CM = 9.0;    // 手腕横纹→中指根典型掌长
 const VFOV_DEG = 52;    // 典型网络摄像头垂直视场角
-const NEAR_CM = 35, FAR_CM = 140;
+// 注：绝对量程(NEAR/FAR_CM)已废弃——改自动量程校准（HandState 内），
+// 手在自然可达范围内的远近被拉伸为满档 0~1，任何值都够得着，无盲区。
 const SMOOTH_POS = 0.35, SMOOTH_DIST = 0.20;
 const SCALE_SMOOTH = 0.30, SPEED_SMOOTH = 0.40;
 const GESTURE_STABLE_FRAMES = 5;   // ~200ms @24fps
@@ -92,6 +93,8 @@ class HandState {
   private sd = 0.5;
   private seen = false;
   private normSm: WLM[] = [];
+  // 自动量程校准：记住本只手实际可达的最近/最远距离，拉伸为满档 0~1（无盲区）
+  private minCm = 0; private maxCm = 0; private cal = false;
 
   /** 输入本帧手势名+landmarks，输出稳定手势/掌心/距离(cm) */
   update(gesture: string, norm: WLM[], nowMs: number): {
@@ -126,7 +129,17 @@ class HandState {
       Math.hypot((norm[0].x - norm[17].x) * ax, norm[0].y - norm[17].y)
     ) / 3;
     const distCm = PALM_CM / (2 * Math.max(spanPx, 1e-4) * Math.tan((VFOV_DEG * Math.PI / 180) / 2));
-    const d01 = Math.max(0, Math.min(1, (FAR_CM - distCm) / (FAR_CM - NEAR_CM)));
+    // 自动量程：极值瞬时纳入、缓慢回漂（活动范围变化可重校准），预留 8% 余量保证两端可达
+    if (!this.cal) { this.minCm = distCm; this.maxCm = distCm; this.cal = true; }
+    else {
+      if (distCm < this.minCm) this.minCm = distCm;
+      else this.minCm += (distCm - this.minCm) * 0.004;
+      if (distCm > this.maxCm) this.maxCm = distCm;
+      else this.maxCm += (distCm - this.maxCm) * 0.004;
+    }
+    const range = Math.max(15, this.maxCm - this.minCm); // 至少 15cm 行程，避免抖动放大
+    const lo = this.minCm - range * 0.08, hi = this.maxCm + range * 0.08;
+    const d01 = Math.max(0, Math.min(1, (hi - distCm) / (hi - lo)));
     this.sd += (d01 - this.sd) * (this.seen ? SMOOTH_DIST : 1.0);
 
     this.seen = true;
@@ -245,39 +258,50 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
         });
       }
 
-      // ── 派生参数 ──
-      // 锁定只在"明确识别出握拳"时触发；识别失败(None=-1)绝不锁死参数
-      const locked = left.detected && L.gesture === 'Closed_Fist';
+      // ── 派生参数（单手接管模式） ──────────────────
+      // 只伸出一只手时，这只手控制全部（手势=剑数+阵式，距离=大小+速度）；
+      // 两只手都在时才分左右职能。锁定仅双手模式下左手 ✊ 触发
+      //（单手模式 ✊ = 千丝绞杀，不锁参数）。
+      const onlyLeft = left.detected && !right.detected;
+      const onlyRight = right.detected && !left.detected;
+
+      // 右职能（阵式/大小/光标）来源：右手；仅左手时由左手接管
+      const fHand = right.detected ? right : (onlyLeft ? left : right);
+      const fGesture = right.detected ? R.gesture : (onlyLeft ? L.gesture : 'None');
+      // 左职能（剑数/速度）来源：左手；仅右手时由右手接管
+      const cHand = left.detected ? left : (onlyRight ? right : left);
+
+      const locked = left.detected && right.detected && L.gesture === 'Closed_Fist';
       stableRef.current.locked = locked;
 
-      if (!locked && right.detected) {
-        const target = SCALE_MIN + right.distance * (SCALE_MAX - SCALE_MIN);
+      if (!locked && fHand.detected) {
+        const target = SCALE_MIN + fHand.distance * (SCALE_MAX - SCALE_MIN);
         smoothScale.current.v = smoothScale.current.v * (1 - SCALE_SMOOTH) + target * SCALE_SMOOTH;
       }
       stableRef.current.scale = smoothScale.current.v;
 
-      if (!locked && left.detected && left.fingerCount > 0 && SWORD_COUNT_BY_FINGER[left.fingerCount] !== undefined) {
-        stableRef.current.count = SWORD_COUNT_BY_FINGER[left.fingerCount];
+      if (!locked && cHand.detected && cHand.fingerCount > 0 && SWORD_COUNT_BY_FINGER[cHand.fingerCount] !== undefined) {
+        stableRef.current.count = SWORD_COUNT_BY_FINGER[cHand.fingerCount];
       }
 
-      if (!locked && left.detected) {
-        const level = Math.max(0, Math.min(4, Math.round(left.distance * 4)));
+      if (!locked && cHand.detected) {
+        const level = Math.max(0, Math.min(SPEED_LEVELS.length - 1, Math.round(cHand.distance * (SPEED_LEVELS.length - 1))));
         const target = SPEED_LEVELS[level].value;
         smoothSpeed.current.v = smoothSpeed.current.v * (1 - SPEED_SMOOTH) + target * SPEED_SMOOTH;
       }
       stableRef.current.speed = smoothSpeed.current.v;
 
-      // 右手手势 → 阵式（None 保持上一阵，避免闪跳）
-      if (right.detected && R.gesture !== 'None') lastRGesture.current = R.gesture;
-      const formation = right.detected && R.gesture !== 'None'
-        ? pickFormation(R.gesture)
-        : (right.detected ? pickFormation(lastRGesture.current) : FormationState.IDLE);
+      // 阵式手势（None 保持上一阵，避免闪跳；单手模式同样适用）
+      if (fHand.detected && fGesture !== 'None') lastRGesture.current = fGesture;
+      const formation = fHand.detected && fGesture !== 'None'
+        ? pickFormation(fGesture)
+        : (fHand.detected ? pickFormation(lastRGesture.current) : FormationState.IDLE);
 
       onUpdate({
         left, right,
-        cursorX: right.detected ? 1 - right.x : 0.5,
-        cursorY: right.detected ? right.y : 0.5,
-        cursorActive: right.detected,
+        cursorX: fHand.detected ? 1 - fHand.x : 0.5,
+        cursorY: fHand.detected ? fHand.y : 0.5,
+        cursorActive: fHand.detected,
         formation,
         swordScale: stableRef.current.scale,
         swordCount: stableRef.current.count,

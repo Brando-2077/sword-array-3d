@@ -67,7 +67,11 @@ const App: any = () => {
   const formation     = interact.formation;
   const meta          = FORMATION_META[formation as FormationState];
   const scalePct      = ((scale - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)) * 100;
-  const speedLevel    = Math.round(speed <= 0.35 ? 0 : speed <= 0.625 ? 1 : speed <= 0.875 ? 2 : speed <= 1.35 ? 3 : 4);
+  const speedLevel    = (() => {
+    let best = 0, bd = Infinity;
+    SPEED_LEVELS.forEach((s, i) => { const d = Math.abs(s.value - speed); if (d < bd) { bd = d; best = i; } });
+    return best;
+  })();
   const speedMeta     = SPEED_LEVELS[speedLevel];
   const leftDetected  = interact.left.detected;
   const rightDetected = interact.right.detected;
@@ -181,7 +185,7 @@ const App: any = () => {
                   minWidth={120}
                   dots={{
                     count: 5,
-                    active: leftDetected ? Math.min(5, Math.max(0, Math.round((interact.left.distance * 4)))) : 0,
+                    active: ({ 9: 1, 12: 2, 24: 3, 36: 4, 72: 5 } as Record<number, number>)[count] ?? 0,
                     color: 'linear-gradient(to right, #d97706, #fbbf24)',
                     glow: 'rgba(251,191,36,0.7)',
                   }}
@@ -197,7 +201,7 @@ const App: any = () => {
                   valueShadow={`0 0 40px ${speedMeta.hex}80`}
                   minWidth={120}
                   dots={{
-                    count: 5,
+                    count: SPEED_LEVELS.length,
                     active: speedLevel,
                     color: speedMeta.hex,
                     glow: `${speedMeta.hex}aa`,
@@ -243,11 +247,11 @@ const App: any = () => {
             <Zap className="w-3 h-3" /> 手势心法
           </div>
           <div className="space-y-1.5 text-[11px] leading-relaxed text-slate-300/80">
-            <LegendRow>右手 ✊千丝绞杀 ☝青元剑芒 ✌剑影分光</LegendRow>
-            <LegendRow>右手 🤘青元剑盾 👍通天剑阵 👋大庚剑阵</LegendRow>
-            <LegendRow>左手 ☝✌🤘👍👋 → 剑数 9/12/24/36/72</LegendRow>
-            <LegendRow>左手 ✊ → 冻结参数；左手距离 → 剑速</LegendRow>
-            <LegendRow>右手距离 → 剑体大小；右手位置 → 群剑追随</LegendRow>
+            <LegendRow>单手模式：一只手控全部</LegendRow>
+            <LegendRow>☝✌🤘👍👋 → 剑数 9/12/24/36/72 + 对应阵式</LegendRow>
+            <LegendRow>手远近 → 剑体大小 + 速度4档（自动量程）</LegendRow>
+            <LegendRow>双手模式：右手阵式/大小 左手剑数/速度</LegendRow>
+            <LegendRow>双手时左手 ✊ → 冻结参数</LegendRow>
           </div>
         </div>
       </div>

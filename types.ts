@@ -170,13 +170,12 @@ export const FORMATION_META: Record<FormationState, FormationMeta> = {
   },
 };
 
-// ─── 速度档位（右手距离 → 速度系数） ────────────────
+// ─── 速度档位（4 档；距离自动量程校准后 round(d*3) 命中） ──
 export const SPEED_LEVELS: { label: string; value: number; color: string; hex: string }[] = [
-  { label: '极缓', value: 0.25, color: 'text-slate-300',  hex: '#cbd5e1' },
-  { label: '缓流', value: 0.50, color: 'text-blue-300',   hex: '#93c5fd' },
-  { label: '中速', value: 0.75, color: 'text-emerald-300',hex: '#6ee7b7' },
-  { label: '疾驰', value: 1.00, color: 'text-amber-300',  hex: '#fcd34d' },
-  { label: '雷光', value: 1.75, color: 'text-red-300',    hex: '#fca5a5' },
+  { label: '极缓', value: 0.35, color: 'text-slate-300',  hex: '#cbd5e1' },
+  { label: '缓流', value: 0.65, color: 'text-blue-300',   hex: '#93c5fd' },
+  { label: '中速', value: 1.00, color: 'text-emerald-300',hex: '#6ee7b7' },
+  { label: '疾驰', value: 1.50, color: 'text-amber-300',  hex: '#fcd34d' },
 ];
 
 // ─── 飞剑数量档位（左手手势 → 剑数；用户定档，72 封顶） ──
