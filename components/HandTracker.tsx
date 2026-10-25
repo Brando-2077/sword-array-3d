@@ -94,7 +94,7 @@ const FINGER_IDS: number[][] = [
   [13, 14, 15, 16],// 无名指
   [17, 18, 19, 20],// 小指
 ];
-function fingerMetrics(world: WLM[]): { ratios: number[]; thumbRatio: number; thumbSep: number; thumbAng: number; angles: number[] } {
+function fingerMetrics(world: WLM[]): { ratios: number[]; thumbRatio: number; thumbSep: number; thumbIdx: number; angles: number[] } {
   const ratios = FINGER_IDS.map((ids) => {
     let len = 0;
     for (let k = 0; k < 3; k++) len += dist3(world[ids[k]], world[ids[k + 1]]);
@@ -106,15 +106,21 @@ function fingerMetrics(world: WLM[]): { ratios: number[]; thumbRatio: number; th
   // 拇指分离度：拇指尖 ↔ 食指根，按掌长（腕→中指根）归一
   const palmSpan = dist3(world[0], world[9]) + 1e-6;
   const thumbSep = dist3(world[4], world[5]) / palmSpan;
-  // 拇指指向角：MCP→TIP 在图像平面内偏离"正上"的角度（0°=正上，180°=正下）。
-  // 张开手掌拇指朝上/斜上（小角度），收拢在拳边朝下（大角度）——比分离度稳
-  const tdx = world[4].x - world[2].x, tdy = world[4].y - world[2].y;
-  const tlen = Math.hypot(tdx, tdy) + 1e-6;
-  const thumbAng = Math.acos(Math.min(1, Math.max(-1, -tdy / tlen))) * 180 / Math.PI;
+  // 拇指-食指夹角（4/5 判别主特征，标定自 2026-10-26 用户真实数据 386 帧）：
+  // 张开手掌 ≈14~44°（拇指与手指平行）；四指伸+拇指收拢 ≈49~106°（垂直/相对）。
+  // 旋转不变（同一只手上两方向的夹角），阈值 40 开 / 55 关（滞回吸收过渡帧）
+  const angV = (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => {
+    const m = Math.hypot(ax, ay, az) * Math.hypot(bx, by, bz);
+    return Math.acos(Math.min(1, Math.max(-1, (ax * bx + ay * by + az * bz) / (m || 1e-9)))) * 180 / Math.PI;
+  };
+  const thumbIdx = angV(
+    world[4].x - world[2].x, world[4].y - world[2].y, world[4].z - world[2].z,
+    world[8].x - world[5].x, world[8].y - world[5].y, world[8].z - world[5].z,
+  );
   // 角度保留仅供日志对照
   const chains: [number, number, number][] = [[5, 6, 8], [9, 10, 12], [13, 14, 16], [17, 18, 20]];
   const angles = chains.map(([mcp, pip, tip]) => angleAt(world[mcp], world[pip], world[tip]));
-  return { ratios, thumbRatio, thumbSep, thumbAng, angles };
+  return { ratios, thumbRatio, thumbSep, thumbIdx, angles };
 }
 
 // 阈值（每指独立，标定自用户 2026-10-26 真实手部数据日志；滞回：ext_on / ext_off）
@@ -123,10 +129,18 @@ const RATIO_CURL = [0, 0.52, 0.48, 0.61, 0.58];  // 四指弯曲阈值
 // 拇指：分离度实测重叠（收拢 0.44~0.68 vs 张开 0.44~0.69）已弃用；
 // 改用指向角（MCP→TIP 偏离正上的角度，0=正上/180=正下）：
 // 张开手掌拇指朝上（小角度），收拢在拳边朝下（大角度）。阈值待实测分布后校准
-const THUMB_ANG_ON = 80, THUMB_ANG_OFF = 105;
+// 拇指-食指夹角分手机型（标定自 2026-10-26 用户双手实测 600+ 帧）：
+// 左手习惯折掌收拢：张开≈36°(小) 收拢≈91°(大) → 小=张开
+// 右手习惯贴食指收拢：张开≈62°(大) 收拢≈11°(小) → 大=张开（方向与左手相反！）
+const THUMB_RULE: Record<'L' | 'R', { openWhen: 'low' | 'high'; on: number; off: number }> = {
+  L: { openWhen: 'low',  on: 40, off: 55 },
+  R: { openWhen: 'high', on: 50, off: 40 },
+};
 
 // ─── 单手状态机：五指滞回 + 手指数时序投票 + 掌心/测距平滑 ──
 class HandState {
+  private rule: 'L' | 'R';
+  constructor(side: 'L' | 'R') { this.rule = side; }
   private ext = [false, false, false, false, false]; // 拇..小（滞回态）
   private candCount = -1;
   private candFrames = 0;
@@ -139,7 +153,7 @@ class HandState {
   private minCm = 0; private maxCm = 0; private cal = false;
 
   /** 输入五指伸直度+拇指分离度+landmarks，输出稳定手指数/掌心/距离(cm) */
-  update(m: { ratios: number[]; thumbRatio: number; thumbSep: number; thumbAng: number; angles: number[] }, norm: WLM[], nowMs: number): {
+  update(m: { ratios: number[]; thumbRatio: number; thumbSep: number; thumbIdx: number; angles: number[] }, norm: WLM[], nowMs: number): {
     count: number; x: number; y: number; distance: number; distCm: number; normSm: WLM[];
   } {
     // 五指滞回判定：四指各用独立阈值；拇指用指向角、且只在四指全伸时计 1
@@ -149,8 +163,11 @@ class HandState {
       else if (this.ext[f + 1] && r < RATIO_CURL[f + 1]) this.ext[f + 1] = false;
     }
     const fourCount = this.ext.reduce((n, e, i) => n + (i > 0 && e ? 1 : 0), 0);
-    if (!this.ext[0] && fourCount === 4 && m.thumbAng < THUMB_ANG_ON) this.ext[0] = true;
-    else if (this.ext[0] && m.thumbAng > THUMB_ANG_OFF) this.ext[0] = false;
+    const r = THUMB_RULE[this.rule];
+    const thumbOpen = r.openWhen === 'low' ? m.thumbIdx < r.on : m.thumbIdx > r.on;
+    const thumbShut = r.openWhen === 'low' ? m.thumbIdx > r.off : m.thumbIdx < r.off;
+    if (!this.ext[0] && fourCount === 4 && thumbOpen) this.ext[0] = true;
+    else if (this.ext[0] && thumbShut) this.ext[0] = false;
     const rawCount = this.ext.reduce((n, e) => n + (e ? 1 : 0), 0);
 
     // 手指数时序投票
@@ -239,7 +256,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
   const stableRef = useRef({ scale: 15, scaleTier: 4, count: 72, speed: 1.0, speedTier: 2, locked: false });
   const smoothScale = useRef({ v: 15 });
   const smoothSpeed = useRef({ v: 1.0 });
-  const states = useRef({ L: new HandState(), R: new HandState() });
+  const states = useRef({ L: new HandState('L'), R: new HandState('R') });
   const lastFCount = useRef<number>(-1); // 阵式保持：上次有效手指数（-1=从未）
 
   useEffect(() => {
@@ -565,7 +582,9 @@ function analyze(
       ratios: metrics.ratios.map((v) => +v.toFixed(2)),
       thumbRatio: +metrics.thumbRatio.toFixed(2),
       thumbSep: +metrics.thumbSep.toFixed(2),
-      thumbAng: Math.round(metrics.thumbAng),
+      thumbIdx: Math.round(metrics.thumbIdx),
+      // 拇指标定用：关键 3D 世界坐标（毫米）[腕0,拇CMC1,拇MCP2,拇IP3,拇TIP4,食MCP5,食TIP8,中MCP9,小MCP17]
+      w: [0, 1, 2, 3, 4, 5, 8, 9, 17].map((i) => [Math.round(world[i].x * 1000), Math.round(world[i].y * 1000), Math.round(world[i].z * 1000)]),
       google: result.gestures?.[idx]?.[0]?.categoryName ?? 'None',
     });
     if (w.__FINGERLOG.length > 3000) w.__FINGERLOG.splice(0, w.__FINGERLOG.length - 3000);
