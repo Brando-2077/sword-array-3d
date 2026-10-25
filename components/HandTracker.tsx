@@ -248,7 +248,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
   const dbgRef = useRef({ t: 0 });
 
   // 派生稳定状态
-  const stableRef = useRef({ scale: 15, count: 72, speed: 1.0, speedTier: 2, locked: false });
+  const stableRef = useRef({ scale: 15, scaleTier: 4, count: 72, speed: 1.0, speedTier: 2, locked: false });
   const smoothScale = useRef({ v: 15 });
   const smoothSpeed = useRef({ v: 1.0 });
   const states = useRef({ L: new HandState(), R: new HandState() });
@@ -289,6 +289,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
           cursorX: 0.5, cursorY: 0.5, cursorActive: false,
           formation: FormationState.IDLE,
           swordScale: stableRef.current.scale,
+          scaleTier:  stableRef.current.scaleTier,
           swordCount: stableRef.current.count,
           animSpeed:  stableRef.current.speed,
           speedTier:  stableRef.current.speedTier,
@@ -342,7 +343,10 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
       stableRef.current.locked = locked;
 
       if (!locked && fHand.detected) {
-        const target = SCALE_MIN + fHand.distance * (SCALE_MAX - SCALE_MIN);
+        // 剑体 10 档量化（档位直出，UI 与档严格对应；平滑值仅供 3D 渐变）
+        const tier = Math.max(0, Math.min(9, Math.round(fHand.distance * 9)));
+        const target = SCALE_MIN + (tier * (SCALE_MAX - SCALE_MIN)) / 9;
+        stableRef.current.scaleTier = tier;
         smoothScale.current.v = smoothScale.current.v * (1 - SCALE_SMOOTH) + target * SCALE_SMOOTH;
       }
       stableRef.current.scale = smoothScale.current.v;
@@ -372,6 +376,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
         cursorActive: fHand.detected,
         formation,
         swordScale: stableRef.current.scale,
+        scaleTier:  stableRef.current.scaleTier,
         swordCount: stableRef.current.count,
         animSpeed:  stableRef.current.speed,
         speedTier:  stableRef.current.speedTier,

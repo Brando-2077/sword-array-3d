@@ -82,6 +82,8 @@ export interface InteractionData {
   cursorActive: boolean;
   formation: FormationState;
   swordScale: number;
+  /** 剑体目标档位 0~9（识别层直出，UI 显示用；swordScale 为平滑值） */
+  scaleTier: number;
   swordCount: number;
   animSpeed: number;
   /** 速度目标档位 0~3（识别层直出，UI 显示用；animSpeed 为平滑值） */

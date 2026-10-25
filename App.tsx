@@ -67,7 +67,8 @@ const App: any = () => {
   const speed         = smoothSpeed.current;
   const formation     = interact.formation;
   const meta          = FORMATION_META[formation as FormationState];
-  const scalePct      = ((scale - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)) * 100;
+  const scaleTier     = Math.max(0, Math.min(9, interact.scaleTier ?? 4)); // 识别层目标档位直出
+  const scalePct      = (scaleTier + 1) * 10;
   const speedLevel    = Math.max(0, Math.min(SPEED_LEVELS.length - 1, interact.speedTier ?? 2)); // 识别层目标档位直出
   const speedMeta     = SPEED_LEVELS[speedLevel];
   const leftDetected  = interact.left.detected;
@@ -109,7 +110,7 @@ const App: any = () => {
   useEffect(() => {
     (window as any).__DAGENG = {
       fps: fpsRef.current.fps,
-      target: { count: interact.swordCount, scale: interact.swordScale, speed: interact.animSpeed, formation: interact.formation },
+      target: { count: interact.swordCount, scale: interact.swordScale, tier: interact.scaleTier, speed: interact.animSpeed, speedTier: interact.speedTier, formation: interact.formation },
       smoothed: { count: Math.round(smoothCount.current), scale: smoothScale.current, speed: smoothSpeed.current },
       left: interact.left, right: interact.right,
       cursor: { x: interact.cursorX, y: interact.cursorY, active: interact.cursorActive },
@@ -160,7 +161,7 @@ const App: any = () => {
                 {/* 剑体大小 */}
                 <ParamPanel
                   label="剑体大小"
-                  value={scale.toFixed(0)}
+                  value={`${scaleTier + 1} 档`}
                   valueColor="text-emerald-300"
                   valueShadow="0 0 40px rgba(16,185,129,0.7)"
                   minWidth={120}
@@ -246,7 +247,7 @@ const App: any = () => {
           <div className="space-y-1.5 text-[11px] leading-relaxed text-slate-300/80">
             <LegendRow>单手模式：一只手控全部</LegendRow>
             <LegendRow>1~5 指 → 剑数 9/12/24/36/72 + 对应阵式</LegendRow>
-            <LegendRow>手远近 → 剑体大小 + 速度4档（自动量程）</LegendRow>
+            <LegendRow>手远近 → 剑体 10 档 + 速度 4 档（已按手位锚定）</LegendRow>
             <LegendRow>双手模式：右手阵式/大小 左手剑数/速度</LegendRow>
             <LegendRow>双手时左手握拳（0 指）→ 冻结参数</LegendRow>
           </div>
