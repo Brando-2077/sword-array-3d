@@ -54,6 +54,25 @@ const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmark
 // 虚拟摄像头特征（DroidCam/OBS/ManyCam 等）：自动选摄像头时跳过，避免拿到未推流的占位画面
 const VIRTUAL_CAM_RE = /droidcam|virtual|e2esoft|manycam|obs|snap camera/i;
 
+// ─── MediaPipe 21 点手骨拓扑（官方 HAND_CONNECTIONS） ──
+const HAND_CONNECTIONS: [number, number][] = [
+  [0,1],[1,2],[2,3],[3,4],           // 拇指
+  [0,5],[5,6],[6,7],[7,8],           // 食指
+  [9,10],[10,11],[11,12],            // 中指
+  [13,14],[14,15],[15,16],           // 无名指
+  [17,18],[18,19],[19,20],           // 小指
+  [5,9],[9,13],[13,17],[0,17],       // 掌骨
+];
+const FINGERTIPS = [4, 8, 12, 16, 20];  // 拇..小 指尖（按 ext 下标对应）
+const SMOOTH_LM_ALPHA = 0.45;           // 关键点 EMA（去抖不拖影）
+
+/**
+ * 左右手判定（MediaPipe 官方约定）：handedness 标签假定输入是"自拍镜像"画面。
+ * 我们送入的是原始（未镜像）摄像头帧，仅显示层 CSS 翻转——因此标签需对调：
+ * 输出 'Left' = 用户右手。若你的相机行为不同，把下面常量翻过来即可。
+ */
+const SWAP_HANDEDNESS = true;
+
 // ─── 3D 点与关节角 ────────────────────────────────
 type WLM = { x: number; y: number; z: number };
 
@@ -76,7 +95,7 @@ const FINGER_CHAINS: [number, number, number][] = [
   [17, 18, 20], // 小指
 ];
 
-// ─── 单手分析器：3D 角度指型 + 绝对测距 + 指型稳定器 ──
+// ─── 单手分析器：3D 角度指型 + 绝对测距 + 指型稳定器 + 关键点平滑 ──
 class HandAnalysis {
   private ext = [false, false, false, false, false]; // 拇..小（滞回态）
   private candCount = -1;
@@ -85,11 +104,25 @@ class HandAnalysis {
   private sx = 0.5; private sy = 0.5;
   private sd = 0.5;
   private seen = false;
+  private normSm: WLM[] = [];
 
-  /** 输入 world/norm landmarks，输出指型 + 平滑掌心 + 绝对距离(0~1, 近=1) */
+  /** 输入 world/norm landmarks，输出指型 + 平滑掌心 + 绝对距离(0~1, 近=1) + 骨骼可视化数据 */
   update(world: WLM[], norm: WLM[], nowMs: number): {
     fingerCount: number; x: number; y: number; distance: number; distCm: number;
+    ext: boolean[]; normSm: WLM[];
   } {
+    // ── 关键点 EMA 平滑（骨骼绘制与掌心共用，去抖不拖影） ──
+    const a = SMOOTH_LM_ALPHA;
+    if (this.normSm.length === 0) {
+      this.normSm = norm.map((p: WLM) => ({ x: p.x, y: p.y, z: p.z }));
+    } else {
+      for (let kk = 0; kk < 21; kk++) {
+        const s = this.normSm[kk], n = norm[kk];
+        s.x += (n.x - s.x) * a; s.y += (n.y - s.y) * a; s.z += (n.z - s.z) * a;
+      }
+    }
+    const nm = this.normSm;
+
     // ── 指型：3D 关节角 + 滞回 ──
     const palmSpan = dist3(world[0], world[9]) || 1e-6;
     for (let f = 0; f < 4; f++) {
@@ -116,8 +149,8 @@ class HandAnalysis {
 
     // ── 掌心：中指根(9)，EMA 平滑 ──
     const k = this.seen ? SMOOTH_POS : 1.0;
-    this.sx += (norm[9].x - this.sx) * k;
-    this.sy += (norm[9].y - this.sy) * k;
+    this.sx += (nm[9].x - this.sx) * k;
+    this.sy += (nm[9].y - this.sy) * k;
 
     // ── 绝对测距：掌长画面占比 → 真实距离(cm) → 0~1 ──
     // norm 坐标 x/y 均归一化，需按 4:3 画幅把 x 拉正后再算几何长度（单位：画面高度）
@@ -133,13 +166,14 @@ class HandAnalysis {
     this.sd += (d01 - this.sd) * (this.seen ? SMOOTH_DIST : 1.0);
 
     this.seen = true;
-    return { fingerCount: this.stableCount, x: this.sx, y: this.sy, distance: this.sd, distCm };
+    return { fingerCount: this.stableCount, x: this.sx, y: this.sy, distance: this.sd, distCm, ext: [...this.ext], normSm: nm };
   }
 }
 
 // ─── 主组件 ──────────────────────────────────────
 const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
   const videoRef      = useRef<HTMLVideoElement>(null);
+  const skelCanvasRef = useRef<HTMLCanvasElement>(null); // LIVE 骨骼绑定可视化层
   const landmarkerRef = useRef<HandLandmarker | null>(null);
   const streamRef     = useRef<MediaStream | null>(null);
   const rafIdRef      = useRef<number>(0);
@@ -192,6 +226,8 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
       const noHand = !result.landmarks || result.landmarks.length === 0;
       if (noHand) {
         setDbgThrottled({ l: '—', r: '—' });
+        const sctx0 = skelCanvasRef.current?.getContext('2d');
+        if (sctx0) sctx0.clearRect(0, 0, sctx0.canvas.width, sctx0.canvas.height);
         onUpdate({
           left:  blankHand(HandRole.LEFT),
           right: blankHand(HandRole.RIGHT),
@@ -205,16 +241,29 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
         return;
       }
 
-      // ── 分类左右手（handedness.label；镜像画面下 'Left'=用户右手） ──
+      // ── 分类左右手（MediaPipe 官方约定：标签按"镜像输入"判定，我们送原始帧故需对调） ──
       let leftIdx = -1, rightIdx = -1;
       for (let i = 0; i < result.landmarks.length; i++) {
         const label = result.handednesses?.[i]?.[0]?.displayName || result.handednesses?.[i]?.[0]?.categoryName;
-        if (label === 'Right' && rightIdx < 0) rightIdx = i;   // 用户右手
-        else if (label !== 'Right' && leftIdx < 0) leftIdx = i;
+        const isUserRight = SWAP_HANDEDNESS ? label === 'Left' : label === 'Right';
+        if (isUserRight && rightIdx < 0) rightIdx = i;
+        else if (!isUserRight && leftIdx < 0) leftIdx = i;
       }
 
-      const left  = buildHand(HandRole.LEFT,  leftIdx,  result, analyses.current.L, now);
-      const right = buildHand(HandRole.RIGHT, rightIdx, result, analyses.current.R, now);
+      const L = buildHand(HandRole.LEFT,  leftIdx,  result, analyses.current.L, now);
+      const left  = L.hand;
+      const R = buildHand(HandRole.RIGHT, rightIdx, result, analyses.current.R, now);
+      const right = R.hand;
+
+      // ── LIVE 画面骨骼绑定可视化（谷歌 MediaPipe 21 点骨架） ──
+      const cv = skelCanvasRef.current;
+      const sctx = cv?.getContext('2d');
+      if (sctx) {
+        const skelHands: { norm: WLM[]; ext: boolean[]; isRight: boolean; label: string }[] = [];
+        if (L.normSm) skelHands.push({ norm: L.normSm, ext: L.ext, isRight: false, label: `左 ${left.fingerCount}指` });
+        if (R.normSm) skelHands.push({ norm: R.normSm, ext: R.ext, isRight: true,  label: `右 ${right.fingerCount}指` });
+        drawHandSkeleton(sctx, skelHands);
+      }
 
       if (DEBUG_PANEL) {
         setDbgThrottled({
@@ -376,6 +425,9 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
           autoPlay playsInline muted
           className="w-full h-full object-cover scale-x-[-1] grayscale contrast-125 opacity-50"
         />
+        {/* 谷歌 MediaPipe 21 点手骨绑定可视化（与镜像视频同向） */}
+        <canvas ref={skelCanvasRef} width={640} height={480}
+          className="absolute inset-0 w-full h-full pointer-events-none" />
         {status !== 'active' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-3">
             {status === 'loading' && (
@@ -422,6 +474,49 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
 };
 
 // ─── 工具 ────────────────────────────────────────
+/** LIVE 画面上绘制 21 点手骨连线（谷歌 MediaPipe 骨架示意）：
+ *  伸直的指尖亮金大点、弯曲指尖暗点、右手翠绿/左手琥珀、腕部标注手别与指数 */
+function drawHandSkeleton(
+  ctx: CanvasRenderingContext2D,
+  hands: { norm: WLM[]; ext: boolean[]; isRight: boolean; label: string }[],
+) {
+  const w = ctx.canvas.width, h = ctx.canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  for (const hand of hands) {
+    const col = hand.isRight ? '#34d399' : '#fbbf24';
+    // 画面用 CSS 水平翻转显示，画布同向镜像才能对齐
+    const px = (lm: WLM) => ({ x: (1 - lm.x) * w, y: lm.y * h });
+    ctx.save();
+    ctx.shadowColor = col;
+    ctx.shadowBlur = 6;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.9;
+    for (const [a, b] of HAND_CONNECTIONS) {
+      const p1 = px(hand.norm[a]), p2 = px(hand.norm[b]);
+      ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+    }
+    for (let i = 0; i < 21; i++) {
+      const p = px(hand.norm[i]);
+      ctx.beginPath(); ctx.arc(p.x, p.y, i === 0 ? 7 : 4, 0, Math.PI * 2);
+      ctx.fillStyle = col; ctx.globalAlpha = 0.95; ctx.fill();
+    }
+    for (let f = 0; f < 5; f++) {
+      const p = px(hand.norm[FINGERTIPS[f]]);
+      ctx.beginPath(); ctx.arc(p.x, p.y, hand.ext[f] ? 9 : 5, 0, Math.PI * 2);
+      if (hand.ext[f]) { ctx.fillStyle = '#fff7cc'; ctx.shadowBlur = 14; ctx.fill(); ctx.shadowBlur = 6; }
+      else { ctx.fillStyle = 'rgba(120,130,140,0.55)'; ctx.fill(); }
+    }
+    const wrist = px(hand.norm[0]);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = col;
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText(hand.label, wrist.x + 12, wrist.y + 8);
+    ctx.restore();
+  }
+}
+
 function blankHand(role: HandRole): HandData {
   return { role, detected: false, x: 0.5, y: 0.5, distance: 0.5, fingerCount: 0, distCm: 0 };
 }
@@ -432,19 +527,23 @@ function buildHand(
   result: HandLandmarkerResult,
   analysis: HandAnalysis,
   nowMs: number,
-): HandData {
-  if (idx < 0) return blankHand(role);
+): { hand: HandData; ext: boolean[]; normSm: WLM[] | null } {
+  if (idx < 0) return { hand: blankHand(role), ext: [false, false, false, false, false], normSm: null };
   const world = result.worldLandmarks?.[idx] as WLM[] | undefined;
   const norm  = result.landmarks[idx] as WLM[];
-  if (!world || world.length < 21) return blankHand(role);
+  if (!world || world.length < 21) return { hand: blankHand(role), ext: [false, false, false, false, false], normSm: null };
   const r = analysis.update(world, norm, nowMs);
   return {
-    role,
-    detected: true,
-    x: r.x, y: r.y,
-    distance: r.distance,
-    fingerCount: r.fingerCount,
-    distCm: r.distCm,
+    hand: {
+      role,
+      detected: true,
+      x: r.x, y: r.y,
+      distance: r.distance,
+      fingerCount: r.fingerCount,
+      distCm: r.distCm,
+    },
+    ext: r.ext,
+    normSm: r.normSm,
   };
 }
 
