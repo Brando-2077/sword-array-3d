@@ -33,9 +33,12 @@ export interface HandTrackerProps {
   onUpdate: (data: InteractionData) => void;
 }
 
-// ─── 官方模型（tasks-vision 同包，GPU 加速） ─────────
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
-const WASM_BASE = '/node_modules/@mediapipe/tasks-vision/wasm';
+// ─── 官方模型（已本地化到 public/，摆脱对谷歌网络的运行时依赖） ──
+// 背景：storage.googleapis.com 在部分网络时断时续，模型拉不下来时
+// 识别器永远起不来 → 所有参数僵死。本地优先，远端兜底。
+const MODEL_LOCAL = '/models/gesture_recognizer.task';
+const MODEL_REMOTE = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
+const WASM_BASE = '/mediapipe-wasm';
 
 // ─── 手势 → 指数 映射（官方手势名；右手查阵式，左手查数量） ──
 const GESTURE_TO_FINGERS: Record<string, number> = {
@@ -305,11 +308,25 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
         });
 
         const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
-        const recognizer = await GestureRecognizer.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-          runningMode: 'VIDEO',
-          numHands: 2,
-        });
+        let recognizer: GestureRecognizer;
+        try {
+          recognizer = await GestureRecognizer.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: MODEL_LOCAL, delegate: 'GPU' },
+            runningMode: 'VIDEO',
+            numHands: 2,
+          });
+        } catch {
+          // 本地模型缺失（如旧部署）时回退远端；GPU 不支持时回退 CPU
+          recognizer = await GestureRecognizer.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: MODEL_REMOTE, delegate: 'GPU' },
+            runningMode: 'VIDEO',
+            numHands: 2,
+          }).catch(() => GestureRecognizer.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: MODEL_LOCAL, delegate: 'CPU' },
+            runningMode: 'VIDEO',
+            numHands: 2,
+          }));
+        }
         recognizerRef.current = recognizer;
         if (!active) { recognizer.close(); return; }
 
