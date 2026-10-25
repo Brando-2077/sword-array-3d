@@ -15,26 +15,28 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import SwordArray3D from './components/SwordArray3D';
 import HandTracker  from './components/HandTracker';
 import {
-  FormationState, InteractionData, FORMATION_META, SPEED_LEVELS,
-  SCALE_MIN, SCALE_MAX,
+  FormationState, HandData, HandRole, InteractionData, FORMATION_META, SPEED_LEVELS,
 } from './types';
 import { Sword, Lock, Unlock, Zap, Crosshair, ChevronRight } from 'lucide-react';
 
-const App: any = () => {
+const App: React.FC = () => {
   // 调试/演示参数：?f=FIVE_FINGER&c=512&s=18 → 固定阵式/数量/大小，跳过手势识别（用于无摄像头验证）
   const debugParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const debugPin = debugParams.get('f') !== null;
   const initScale = Number(debugParams.get('s') || (localStorage.getItem('dageng-scale-default')) || 15);
   const initCount = Number(debugParams.get('c')) || 72;
-  const initSpeed = 0.75;
+  const initSpeed = SPEED_LEVELS[2].value; // 与速度档位一致（中速），杜绝初始态落在档间
 
-  // 顶层 state：只存"会触发重渲染"的离散量
-  const [interact, setInteract] = useState<any>({
-    left:  { role: 'LEFT'  as any, detected: false, x: 0, y: 0, distance: 0, fingerCount: 0 },
-    right: { role: 'RIGHT' as any, detected: false, x: 0, y: 0, distance: 0, fingerCount: 0 },
+  // 顶层 state：只存"会触发重渲染"的离散量（初始值与档位表严格一致）
+  const blankHandL: HandData = { role: HandRole.LEFT,  detected: false, x: 0.5, y: 0.5, distance: 0.5, fingerCount: 0, distCm: 0 };
+  const blankHandR: HandData = { role: HandRole.RIGHT, detected: false, x: 0.5, y: 0.5, distance: 0.5, fingerCount: 0, distCm: 0 };
+  const [interact, setInteract] = useState<InteractionData>({
+    left:  blankHandL,
+    right: blankHandR,
     cursorX: 0.5, cursorY: 0.5, cursorActive: false,
-    formation: (FormationState as any)[debugParams.get('f') ?? ''] ?? FormationState.IDLE,
-    swordScale: initScale, swordCount: initCount, animSpeed: initSpeed, locked: false,
+    formation: (FormationState as Record<string, FormationState>)[debugParams.get('f') ?? ''] ?? FormationState.IDLE,
+    swordScale: initScale, scaleTier: 4, swordCount: initCount,
+    animSpeed: initSpeed, speedTier: 2, locked: false,
   });
 
   // 平滑缓冲（不触发重渲染）；初始值与 interact 一致，保证无手势更新（调试模式）时参数直达
@@ -66,7 +68,7 @@ const App: any = () => {
   const targetCount   = interact.swordCount;                      // 目标档位：UI 显示用（始终为档位值）
   const speed         = smoothSpeed.current;
   const formation     = interact.formation;
-  const meta          = FORMATION_META[formation as FormationState];
+  const meta          = FORMATION_META[formation];
   const scaleTier     = Math.max(0, Math.min(9, interact.scaleTier ?? 4)); // 识别层目标档位直出
   const scalePct      = (scaleTier + 1) * 10;
   const speedLevel    = Math.max(0, Math.min(SPEED_LEVELS.length - 1, interact.speedTier ?? 2)); // 识别层目标档位直出

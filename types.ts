@@ -9,7 +9,6 @@
  *   锁定功能：左手握拳触发，冻结数量/速度/大小三个参数
  */
 
-import type { ReactNode } from 'react';
 
 // ─── 手部角色 ───────────────────────────────────────
 export enum HandRole {
@@ -195,14 +194,3 @@ export const SWORD_COUNT_BY_FINGER: Record<number, number> = {
 // ─── 剑体大小范围 ───────────────────────────────────
 export const SCALE_MIN = 5;
 export const SCALE_MAX = 30;
-
-// ─── UI 子组件 Props 类型 ────────────────────────────
-export interface TopBarProps {
-  scale: number;
-  count: number;
-  speedLevel: number;
-  formation: FormationState;
-  leftDetected: boolean;
-  rightDetected: boolean;
-  locked: boolean;
-}

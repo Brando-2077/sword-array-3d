@@ -1,6 +1,6 @@
 {
   "name": "sword-array-3d",
-  "version": "5.0.0",
+  "version": "7.0.0",
   "description": "基于 Three.js 和 MediaPipe 的沉浸式大庚剑阵手势模拟器 - 通过摄像头捕捉双手动作，实时操控飞剑施展动漫真实剑招（千丝绞杀/青元剑芒/剑影分光术/青元剑盾/剑丝流光/大庚剑阵）",
   "keywords": [
     "three.js",

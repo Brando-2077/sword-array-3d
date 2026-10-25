@@ -33,25 +33,7 @@ canvas {
   border-radius: 2px;
 }
 
-/* ─── 加载态 — 灵动感 ───────────────────────── */
-@keyframes swordPulse {
-  0%, 100% { opacity: 0.6; transform: scale(1); }
-  50%      { opacity: 1.0; transform: scale(1.05); }
-}
-
-@keyframes arraySpin {
-  0%   { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-@keyframes glowFade {
-  0%, 100% { opacity: 0.7; }
-  50%      { opacity: 1.0; }
-}
-
-.sword-pulse { animation: swordPulse 2.5s ease-in-out infinite; }
-.array-spin  { animation: arraySpin 3s linear infinite; }
-.glow-fade   { animation: glowFade 2s ease-in-out infinite; }
+/* ─── 加载态：自定义帧已清理（Tailwind animate-* 已覆盖） ── */
 
 /* ─── 玻璃面板工具类 ─────────────────────────── */
 .glass-panel {

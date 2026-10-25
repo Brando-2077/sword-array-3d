@@ -40,18 +40,6 @@ const MODEL_LOCAL = '/models/gesture_recognizer.task';
 const MODEL_REMOTE = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
 const WASM_BASE = '/mediapipe-wasm';
 
-// 谷歌预训练手势兜底映射（自研角度法无数据时）
-const GESTURE_TO_FINGERS: Record<string, number> = {
-  Closed_Fist: 0,
-  Point_Up: 1,
-  Victory: 2,
-  ILoveYou: 3,
-  Thumb_Up: 4,
-  Thumb_Down: 4,
-  Open_Palm: 5,
-  None: -1,
-};
-const fingerCountOf = (g: string) => GESTURE_TO_FINGERS[g] ?? -1;
 
 // ─── 测距参数（几何法，与手势无关） ────────────────
 const PALM_CM = 9.0;    // 手腕横纹→中指根典型掌长
@@ -252,7 +240,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
   const smoothScale = useRef({ v: 15 });
   const smoothSpeed = useRef({ v: 1.0 });
   const states = useRef({ L: new HandState(), R: new HandState() });
-  const lastRGesture = useRef<string>('None');
+  const lastFCount = useRef<number>(-1); // 阵式保持：上次有效手指数（-1=从未）
 
   useEffect(() => {
     let active = true;
@@ -364,10 +352,10 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
       stableRef.current.speed = smoothSpeed.current.v;
 
       // 阵式：未识别(-1)保持上一阵，避免闪跳
-      if (fHand.detected && fCount >= 0) lastRGesture.current = String(fCount);
+      if (fHand.detected && fCount >= 0) lastFCount.current = fCount;
       const formation = fHand.detected && fCount >= 0
         ? pickFormation(fCount)
-        : (fHand.detected ? pickFormation(Number(lastRGesture.current)) : FormationState.IDLE);
+        : (fHand.detected ? pickFormation(lastFCount.current) : FormationState.IDLE);
 
       onUpdate({
         left, right,
