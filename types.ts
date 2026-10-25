@@ -117,7 +117,7 @@ export const FORMATION_META: Record<FormationState, FormationMeta> = {
   [FormationState.THOUSAND_SILK]: {
     id: FormationState.THOUSAND_SILK,
     name: '千丝绞杀',
-    trigger: '右手握拳',
+    trigger: '右手 ✊ 握拳',
     description: '剑光分化千丝金线，织茧缠敌层层收紧（vs 阴罗宗四长老名场面）',
     uiColor: 'text-amber-300',
     uiColorHex: '#fcd34d',
@@ -126,7 +126,7 @@ export const FORMATION_META: Record<FormationState, FormationMeta> = {
   [FormationState.SWORD_BEAM]: {
     id: FormationState.SWORD_BEAM,
     name: '青元剑芒',
-    trigger: '右手 1 指',
+    trigger: '右手 ☝ 食指',
     description: '筑基期标志剑光：群剑凝成一线剑芒，随手疾射',
     uiColor: 'text-emerald-300',
     uiColorHex: '#6ee7b7',
@@ -135,7 +135,7 @@ export const FORMATION_META: Record<FormationState, FormationMeta> = {
   [FormationState.SWORD_SHADOW]: {
     id: FormationState.SWORD_SHADOW,
     name: '剑影分光术',
-    trigger: '右手 2 指',
+    trigger: '右手 ✌ 剪刀手',
     description: '一实多虚剑影扇面铺陈，虚实相生（飞剑分影名场面）',
     uiColor: 'text-teal-300',
     uiColorHex: '#5eead4',
@@ -144,7 +144,7 @@ export const FORMATION_META: Record<FormationState, FormationMeta> = {
   [FormationState.SWORD_SHIELD]: {
     id: FormationState.SWORD_SHIELD,
     name: '青元剑盾',
-    trigger: '右手 3 指',
+    trigger: '右手 🤘 ROCK手',
     description: '青元剑诀护体神通：剑光成栅，结盾御敌',
     uiColor: 'text-emerald-200',
     uiColorHex: '#a7f3d0',
@@ -153,7 +153,7 @@ export const FORMATION_META: Record<FormationState, FormationMeta> = {
   [FormationState.DAGENG_ARRAY]: {
     id: FormationState.DAGENG_ARRAY,
     name: '大庚剑阵',
-    trigger: '右手 5 指（摊掌）',
+    trigger: '右手 👋 摊掌',
     description: '元婴至高神通：万剑齐发结成放射剑球，金丝环绕缓缓自转',
     uiColor: 'text-amber-300',
     uiColorHex: '#fcd34d',
@@ -162,7 +162,7 @@ export const FORMATION_META: Record<FormationState, FormationMeta> = {
   [FormationState.TONGTIAN_ARRAY]: {
     id: FormationState.TONGTIAN_ARRAY,
     name: '通天剑阵',
-    trigger: '右手 4 指',
+    trigger: '右手 👍 点赞手',
     description: '仙界剑阵：紫金仙纹剑柱通天彻地，万道剑雨落下，紫雷穿梭',
     uiColor: 'text-purple-300',
     uiColorHex: '#d8b4fe',
