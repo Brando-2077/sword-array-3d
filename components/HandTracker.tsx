@@ -71,6 +71,15 @@ const VIRTUAL_CAM_RE = /droidcam|virtual|e2esoft|manycam|obs|snap camera/i;
 // ⚠️ 用户明确要求：不要再提供左右互换功能，此方向已锁定。
 const SWAP_HANDEDNESS = false;
 
+// 量程锚点（标定会话写入 localStorage 'dageng-range' {min,max}，单位 cm）
+const RANGE_ANCHOR: { min: number; max: number } | null = (() => {
+  try {
+    const r = JSON.parse(localStorage.getItem('dageng-range') || 'null');
+    if (r && typeof r.min === 'number' && typeof r.max === 'number' && r.max > r.min) return r;
+  } catch { /* noop */ }
+  return null;
+})();
+
 // ─── 21 点手骨拓扑（官方 HAND_CONNECTIONS） ─────────
 const HAND_CONNECTIONS: [number, number][] = [
   [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],
@@ -97,7 +106,7 @@ const FINGER_IDS: number[][] = [
   [13, 14, 15, 16],// 无名指
   [17, 18, 19, 20],// 小指
 ];
-function fingerMetrics(world: WLM[]): { ratios: number[]; thumbRatio: number; thumbSep: number; angles: number[] } {
+function fingerMetrics(world: WLM[]): { ratios: number[]; thumbRatio: number; thumbSep: number; thumbAng: number; angles: number[] } {
   const ratios = FINGER_IDS.map((ids) => {
     let len = 0;
     for (let k = 0; k < 3; k++) len += dist3(world[ids[k]], world[ids[k + 1]]);
@@ -109,19 +118,24 @@ function fingerMetrics(world: WLM[]): { ratios: number[]; thumbRatio: number; th
   // 拇指分离度：拇指尖 ↔ 食指根，按掌长（腕→中指根）归一
   const palmSpan = dist3(world[0], world[9]) + 1e-6;
   const thumbSep = dist3(world[4], world[5]) / palmSpan;
+  // 拇指指向角：MCP→TIP 在图像平面内偏离"正上"的角度（0°=正上，180°=正下）。
+  // 张开手掌拇指朝上/斜上（小角度），收拢在拳边朝下（大角度）——比分离度稳
+  const tdx = world[4].x - world[2].x, tdy = world[4].y - world[2].y;
+  const tlen = Math.hypot(tdx, tdy) + 1e-6;
+  const thumbAng = Math.acos(Math.min(1, Math.max(-1, -tdy / tlen))) * 180 / Math.PI;
   // 角度保留仅供日志对照
   const chains: [number, number, number][] = [[5, 6, 8], [9, 10, 12], [13, 14, 16], [17, 18, 20]];
   const angles = chains.map(([mcp, pip, tip]) => angleAt(world[mcp], world[pip], world[tip]));
-  return { ratios, thumbRatio, thumbSep, angles };
+  return { ratios, thumbRatio, thumbSep, thumbAng, angles };
 }
 
 // 阈值（每指独立，标定自用户 2026-10-26 真实手部数据日志；滞回：ext_on / ext_off）
 const RATIO_EXT = [0, 0.67, 0.63, 0.76, 0.73];   // 四指伸直阈值（食/中/无/小）
 const RATIO_CURL = [0, 0.52, 0.48, 0.61, 0.58];  // 四指弯曲阈值
-// 拇指：伸直度比值在收拢/张开两种姿态下重叠（0.59~0.67 vs 0.61~0.67），已弃用；
-// 改用分离度（拇指尖↔食指根 ÷ 掌长）：收拢实测 0.52~0.68、张开实测 0.79
-// 拇指仅在四指全伸时参与判定（区分 👍36 与 👋72），其余档位不受拇指影响
-const THUMB_SEP_ON = 0.74, THUMB_SEP_OFF = 0.70;
+// 拇指：分离度实测重叠（收拢 0.44~0.68 vs 张开 0.44~0.69）已弃用；
+// 改用指向角（MCP→TIP 偏离正上的角度，0=正上/180=正下）：
+// 张开手掌拇指朝上（小角度），收拢在拳边朝下（大角度）。阈值待实测分布后校准
+const THUMB_ANG_ON = 80, THUMB_ANG_OFF = 105;
 
 // ─── 单手状态机：五指滞回 + 手指数时序投票 + 掌心/测距平滑 ──
 class HandState {
@@ -137,18 +151,18 @@ class HandState {
   private minCm = 0; private maxCm = 0; private cal = false;
 
   /** 输入五指伸直度+拇指分离度+landmarks，输出稳定手指数/掌心/距离(cm) */
-  update(m: { ratios: number[]; thumbRatio: number; thumbSep: number; angles: number[] }, norm: WLM[], nowMs: number): {
+  update(m: { ratios: number[]; thumbRatio: number; thumbSep: number; thumbAng: number; angles: number[] }, norm: WLM[], nowMs: number): {
     count: number; x: number; y: number; distance: number; distCm: number; normSm: WLM[];
   } {
-    // 五指滞回判定：四指各用独立阈值；拇指仅用分离度、且只在四指全伸时计 1
+    // 五指滞回判定：四指各用独立阈值；拇指用指向角、且只在四指全伸时计 1
     for (let f = 0; f < 4; f++) {
       const r = m.ratios[f];
       if (!this.ext[f + 1] && r > RATIO_EXT[f + 1]) this.ext[f + 1] = true;
       else if (this.ext[f + 1] && r < RATIO_CURL[f + 1]) this.ext[f + 1] = false;
     }
     const fourCount = this.ext.reduce((n, e, i) => n + (i > 0 && e ? 1 : 0), 0);
-    if (!this.ext[0] && fourCount === 4 && m.thumbSep > THUMB_SEP_ON) this.ext[0] = true;
-    else if (this.ext[0] && m.thumbSep < THUMB_SEP_OFF) this.ext[0] = false;
+    if (!this.ext[0] && fourCount === 4 && m.thumbAng < THUMB_ANG_ON) this.ext[0] = true;
+    else if (this.ext[0] && m.thumbAng > THUMB_ANG_OFF) this.ext[0] = false;
     const rawCount = this.ext.reduce((n, e) => n + (e ? 1 : 0), 0);
 
     // 手指数时序投票
@@ -180,16 +194,24 @@ class HandState {
       Math.hypot((norm[0].x - norm[17].x) * ax, norm[0].y - norm[17].y)
     ) / 3;
     const distCm = PALM_CM / (2 * Math.max(spanPx, 1e-4) * Math.tan((VFOV_DEG * Math.PI / 180) / 2));
-    // 自动量程：极值瞬时纳入、缓慢回漂（活动范围变化可重校准），预留 8% 余量保证两端可达
-    if (!this.cal) { this.minCm = distCm; this.maxCm = distCm; this.cal = true; }
-    else {
-      if (distCm < this.minCm) this.minCm = distCm;
-      else this.minCm += (distCm - this.minCm) * 0.004;
-      if (distCm > this.maxCm) this.maxCm = distCm;
-      else this.maxCm += (distCm - this.maxCm) * 0.004;
+    // 量程：优先用标定锚点（localStorage 'dageng-range'，由标定会话写入，
+    // 锚定"手部可达空间 ↔ 数值区间"的绑定）；无锚点时退回自适应跟踪（兜底）
+    let lo: number, hi: number;
+    const anchor = RANGE_ANCHOR;
+    if (anchor) {
+      const m = (anchor.max - anchor.min) * 0.15;
+      lo = anchor.min - m; hi = anchor.max + m;
+    } else {
+      if (!this.cal) { this.minCm = distCm; this.maxCm = distCm; this.cal = true; }
+      else {
+        if (distCm < this.minCm) this.minCm = distCm;
+        else this.minCm += (distCm - this.minCm) * 0.004;
+        if (distCm > this.maxCm) this.maxCm = distCm;
+        else this.maxCm += (distCm - this.maxCm) * 0.004;
+      }
+      const range = Math.max(15, this.maxCm - this.minCm);
+      lo = this.minCm - range * 0.08; hi = this.maxCm + range * 0.08;
     }
-    const range = Math.max(15, this.maxCm - this.minCm); // 至少 15cm 行程，避免抖动放大
-    const lo = this.minCm - range * 0.08, hi = this.maxCm + range * 0.08;
     const d01 = Math.max(0, Math.min(1, (hi - distCm) / (hi - lo)));
     this.sd += (d01 - this.sd) * (this.seen ? SMOOTH_DIST : 1.0);
 
@@ -546,10 +568,11 @@ function analyze(
     if (!w.__FINGERLOG) w.__FINGERLOG = [];
     w.__FINGERLOG.push({
       t: Date.now(), side: role === HandRole.RIGHT ? 'R' : 'L',
-      raw: r.count,
+      raw: r.count, cm: Math.round(r.distCm),
       ratios: metrics.ratios.map((v) => +v.toFixed(2)),
       thumbRatio: +metrics.thumbRatio.toFixed(2),
       thumbSep: +metrics.thumbSep.toFixed(2),
+      thumbAng: Math.round(metrics.thumbAng),
       google: result.gestures?.[idx]?.[0]?.categoryName ?? 'None',
     });
     if (w.__FINGERLOG.length > 3000) w.__FINGERLOG.splice(0, w.__FINGERLOG.length - 3000);

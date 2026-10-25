@@ -24,7 +24,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass }     from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { FormationState, SCALE_MIN } from '../types';
+import { FormationState, SCALE_MIN, SCALE_MAX } from '../types';
 
 // ─── Props ────────────────────────────────────────
 interface SwordArray3DProps {
@@ -527,7 +527,9 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
       if (cSpeed < 2.5) { /* 静止：保持上一方向 */ }
 
       const cx = smoothCx, cy = smoothCy, cz = -120;
-      const zPush = (p.swordScale - SCALE_MIN) * 6; // 透视推近（v3.0 减弱版）
+      // 剑体大小 = 3D 纵深（空间关系而非平面缩放）：大→剑群向镜头逼近（透视
+      // 放大 + 视差层次），小→退远。非线性推近，最大档逼近镜头 ~1/3 行程
+      const zPush = Math.pow(Math.max(0, (p.swordScale - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)), 1.35) * 950;
 
       // ── 逐剑：目标位置 + 物理 + 朝向 ──
       for (let i = 0; i < MAX_SWORDS; i++) {

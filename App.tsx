@@ -24,7 +24,7 @@ const App: any = () => {
   // 调试/演示参数：?f=FIVE_FINGER&c=512&s=18 → 固定阵式/数量/大小，跳过手势识别（用于无摄像头验证）
   const debugParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const debugPin = debugParams.get('f') !== null;
-  const initScale = Number(debugParams.get('s')) || 15;
+  const initScale = Number(debugParams.get('s') || (localStorage.getItem('dageng-scale-default')) || 15);
   const initCount = Number(debugParams.get('c')) || 72;
   const initSpeed = 0.75;
 
