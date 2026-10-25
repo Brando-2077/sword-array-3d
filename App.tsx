@@ -74,6 +74,48 @@ const App: any = () => {
   const locked        = interact.locked;
   const cursorActive  = interact.cursorActive;
 
+  // ── 实时数据监测面板（?debug=1 或按 D 键开关，localStorage 记忆） ──
+  const [showHud, setShowHud] = useState<boolean>(() => {
+    if (debugParams.get('debug') === '1') return true;
+    try { return localStorage.getItem('dageng-hud') === '1'; } catch { return false; }
+  });
+  const fpsRef = useRef({ frames: 0, t: performance.now(), fps: 0 });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'd' || e.key === 'D') {
+        setShowHud((v) => {
+          try { localStorage.setItem('dageng-hud', v ? '0' : '1'); } catch { /* noop */ }
+          return !v;
+        });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const f = fpsRef.current;
+      f.frames++;
+      const now = performance.now();
+      if (now - f.t >= 1000) { f.fps = f.frames; f.frames = 0; f.t = now; }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  // 数据同步挂 window，控制台可 window.__DAGENG 实时查看
+  useEffect(() => {
+    (window as any).__DAGENG = {
+      fps: fpsRef.current.fps,
+      target: { count: interact.swordCount, scale: interact.swordScale, speed: interact.animSpeed, formation: interact.formation },
+      smoothed: { count: Math.round(smoothCount.current), scale: smoothScale.current, speed: smoothSpeed.current },
+      left: interact.left, right: interact.right,
+      cursor: { x: interact.cursorX, y: interact.cursorY, active: interact.cursorActive },
+      locked: interact.locked,
+    };
+  });
+
   return (
     <div className="h-screen w-screen bg-[#010409] text-slate-100 flex overflow-hidden relative font-['Noto_Serif_SC']">
 
@@ -238,6 +280,24 @@ const App: any = () => {
           </div>
         </div>
       </div>
+
+      {/* ── 左上：实时数据监测面板（D 键开关） ─────── */}
+      {showHud && (
+        <div className="absolute top-[140px] left-10 z-30 pointer-events-none select-none">
+          <div className="px-3 py-2 bg-black/75 backdrop-blur-md border border-emerald-500/25 rounded-xl font-mono text-[10px] leading-relaxed text-emerald-200/90 space-y-0.5 min-w-[240px]">
+            <div className="text-emerald-300 font-bold tracking-widest">监测 · FPS {fpsRef.current.fps} {locked ? <span className="text-red-400">[锁定]</span> : ''}</div>
+            <div className="text-amber-300/90">左 {interact.left.detected
+              ? `${interact.left.fingerCount > 0 ? interact.left.fingerCount + '指' : '…'} ${interact.left.distCm ? interact.left.distCm.toFixed(0) : '?'}cm d${interact.left.distance.toFixed(2)} (${interact.left.x.toFixed(2)},${interact.left.y.toFixed(2)})`
+              : '未检测'}</div>
+            <div className="text-emerald-300/90">右 {interact.right.detected
+              ? `${interact.right.fingerCount > 0 ? interact.right.fingerCount + '指' : '…'} ${interact.right.distCm ? interact.right.distCm.toFixed(0) : '?'}cm d${interact.right.distance.toFixed(2)} (${interact.right.x.toFixed(2)},${interact.right.y.toFixed(2)})`
+              : '未检测'}</div>
+            <div>目标 剑{interact.swordCount} 大小{interact.swordScale.toFixed(1)} 速度{interact.animSpeed.toFixed(2)}</div>
+            <div>平滑 剑{count} 大小{scale.toFixed(1)} 速度{speed.toFixed(2)}</div>
+            <div className="text-cyan-300/90">阵式 {formation} {cursorActive ? `光标(${interact.cursorX.toFixed(2)},${interact.cursorY.toFixed(2)})` : '无光标'}</div>
+          </div>
+        </div>
+      )}
 
       {/* 手势识别（调试模式下跳过，避免摄像头权限弹窗） */}
       {!debugPin && <HandTracker onUpdate={setInteract} />}
