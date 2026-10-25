@@ -22,7 +22,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   GestureRecognizer, FilesetResolver, GestureRecognizerResult,
 } from '@mediapipe/tasks-vision';
-import { GestureEstimator, GestureDescription, Finger, FingerCurl } from 'fingerpose';
+import { GestureEstimator } from 'fingerpose';
 import {
   FormationState, HandData, HandRole, InteractionData,
   SWORD_COUNT_BY_FINGER, SPEED_LEVELS, SCALE_MIN, SCALE_MAX,
@@ -41,43 +41,27 @@ const MODEL_LOCAL = '/models/gesture_recognizer.task';
 const MODEL_REMOTE = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
 const WASM_BASE = '/mediapipe-wasm';
 
-// ─── 手指数量识别（根基）：fingerpose 开源库 + 自定义 0~5 指手势描述 ──
-// fingerpose 用 3D 骨骼段夹角算每根手指的弯曲度（NoCurl/HalfCurl/FullCurl），
-// 久经考验；1~4 指依次展开均可准确区分（谷歌预训练手势做不到）。
-const ALL_FINGERS: number[] = [Finger.Thumb, Finger.Index, Finger.Middle, Finger.Ring, Finger.Pinky];
-function makeCountGesture(name: string, extended: number[]): GestureDescription {
-  const g = new GestureDescription(name);
-  for (const f of ALL_FINGERS) {
-    if (f === Finger.Thumb) {
-      // 拇指弯曲度天然不稳：低权重容忍
-      if (extended.includes(f)) {
-        g.addCurl(f, FingerCurl.NoCurl, 0.8);
-        g.addCurl(f, FingerCurl.HalfCurl, 0.4);
-      } else {
-        g.addCurl(f, FingerCurl.FullCurl, 0.6);
-        g.addCurl(f, FingerCurl.HalfCurl, 0.4);
-      }
-    } else if (extended.includes(f)) {
-      g.addCurl(f, FingerCurl.NoCurl, 1.0);
-    } else {
-      g.addCurl(f, FingerCurl.FullCurl, 1.0);
-      g.addCurl(f, FingerCurl.HalfCurl, 0.5);
-    }
+// ─── 手指数量识别（根基）：fingerpose 逐指弯曲度，直接数伸直的手指 ──
+// ⚠️ fingerpose 要求关键点为 [x,y,z] 数组格式（对象格式会导致全 NaN，
+//    v7.0 的"全部识别成一样"即此因）。
+// 四指（食/中/无名/小）No Curl 记伸直；拇指 No Curl 计 1。
+// 语义：1=食指 2=食+中 3=+无名 4=+小指 5=全伸。
+const FP_EST = new GestureEstimator([]); // 空描述：只用其内部逐指弯曲度计算
+type PoseRow = [string, string, string];
+function countFromLandmarks(norm: WLM[]): { raw: number; curls: string } {
+  const arr = norm.map((p: WLM) => [p.x, p.y, p.z] as [number, number, number]);
+  try {
+    const r = FP_EST.estimate(arr, 0);
+    const pd = (r as { poseData?: PoseRow[] }).poseData;
+    if (!pd || pd.length < 5) return { raw: -1, curls: '' };
+    const curlOf = (f: string) => pd.find((x) => x[0] === f)?.[1] ?? '?';
+    const four = ['Index', 'Middle', 'Ring', 'Pinky'].filter((f) => curlOf(f) === 'No Curl').length;
+    const thumb = curlOf('Thumb') === 'No Curl' ? 1 : 0;
+    return { raw: four + thumb, curls: pd.map((x) => x[0][0] + x[1][0] + x[1].replace(/No Curl|Half Curl|Full Curl/, m => ({'No Curl':'直','Half Curl':'半','Full Curl':'曲'} as Record<string,string>)[m] ?? m)).join(' ') };
+  } catch {
+    return { raw: -1, curls: '' };
   }
-  return g;
 }
-const COUNT_BY_NAME: Record<string, number> = {
-  FIST: 0, ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5,
-};
-const COUNT_ESTIMATOR = new GestureEstimator([
-  makeCountGesture('FIST', []),
-  makeCountGesture('ONE', [Finger.Index]),
-  makeCountGesture('TWO', [Finger.Index, Finger.Middle]),
-  makeCountGesture('THREE', [Finger.Index, Finger.Middle, Finger.Ring]),
-  makeCountGesture('FOUR', [Finger.Index, Finger.Middle, Finger.Ring, Finger.Pinky]),
-  makeCountGesture('FIVE', ALL_FINGERS),
-]);
-const FP_SCORE_THRESHOLD = 7.5;
 
 // 谷歌预训练手势兜底映射（fingerpose 无匹配时）
 const GESTURE_TO_FINGERS: Record<string, number> = {
@@ -514,16 +498,20 @@ function analyze(
   const norm = result.landmarks[idx] as WLM[];
   if (!norm || norm.length < 21) return { hand: blankHand(role), count: -1, normSm: null };
 
-  // 手指数判定：fingerpose 主判（真·伸指数 0~5），谷歌预训练手势兜底
-  let raw = -1;
-  try {
-    const est = COUNT_ESTIMATOR.estimate(norm, FP_SCORE_THRESHOLD);
-    if (est.gestures.length > 0) raw = COUNT_BY_NAME[est.gestures[0].name] ?? -1;
-  } catch { /* 单帧异常忽略 */ }
-  if (raw < 0) {
+  // 手指数判定：fingerpose 逐指弯曲度直接计数（真·伸指数 0~5），谷歌预训练手势兜底
+  const { raw, curls } = countFromLandmarks(norm);
+  let rawCount = raw;
+  if (rawCount < 0) {
     const google = result.gestures?.[idx]?.[0]?.categoryName ?? 'None';
-    raw = fingerCountOf(google);
+    rawCount = fingerCountOf(google);
   }
+  // 实时数据记录器：控制台 window.__FINGERLOG 可查每帧逐指弯曲度与判定
+  try {
+    const w = window as any;
+    if (!w.__FINGERLOG) w.__FINGERLOG = [];
+    w.__FINGERLOG.push({ t: Date.now(), side: role === HandRole.RIGHT ? 'R' : 'L', raw: rawCount, curls, google: result.gestures?.[idx]?.[0]?.categoryName ?? 'None' });
+    if (w.__FINGERLOG.length > 300) w.__FINGERLOG.splice(0, w.__FINGERLOG.length - 300);
+  } catch { /* noop */ }
 
   const r = state.update(raw, norm, nowMs);
   return {
