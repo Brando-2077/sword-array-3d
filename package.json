@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",
+    "fingerpose": "^0.1.0",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

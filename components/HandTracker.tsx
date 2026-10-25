@@ -22,6 +22,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   GestureRecognizer, FilesetResolver, GestureRecognizerResult,
 } from '@mediapipe/tasks-vision';
+import { GestureEstimator, GestureDescription, Finger, FingerCurl } from 'fingerpose';
 import {
   FormationState, HandData, HandRole, InteractionData,
   SWORD_COUNT_BY_FINGER, SPEED_LEVELS, SCALE_MIN, SCALE_MAX,
@@ -40,9 +41,45 @@ const MODEL_LOCAL = '/models/gesture_recognizer.task';
 const MODEL_REMOTE = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
 const WASM_BASE = '/mediapipe-wasm';
 
-// ─── 手势 → 指数 映射（官方手势名；右手查阵式，左手查数量） ──
-// ⚠️ 'None'（未识别）绝不能映射为 0/握拳——否则任何识别失败帧都会触发
-//    参数锁定，全局僵死（v6.0 失控 bug 根因）。未识别 = -1 = 不干预。
+// ─── 手指数量识别（根基）：fingerpose 开源库 + 自定义 0~5 指手势描述 ──
+// fingerpose 用 3D 骨骼段夹角算每根手指的弯曲度（NoCurl/HalfCurl/FullCurl），
+// 久经考验；1~4 指依次展开均可准确区分（谷歌预训练手势做不到）。
+const ALL_FINGERS: number[] = [Finger.Thumb, Finger.Index, Finger.Middle, Finger.Ring, Finger.Pinky];
+function makeCountGesture(name: string, extended: number[]): GestureDescription {
+  const g = new GestureDescription(name);
+  for (const f of ALL_FINGERS) {
+    if (f === Finger.Thumb) {
+      // 拇指弯曲度天然不稳：低权重容忍
+      if (extended.includes(f)) {
+        g.addCurl(f, FingerCurl.NoCurl, 0.8);
+        g.addCurl(f, FingerCurl.HalfCurl, 0.4);
+      } else {
+        g.addCurl(f, FingerCurl.FullCurl, 0.6);
+        g.addCurl(f, FingerCurl.HalfCurl, 0.4);
+      }
+    } else if (extended.includes(f)) {
+      g.addCurl(f, FingerCurl.NoCurl, 1.0);
+    } else {
+      g.addCurl(f, FingerCurl.FullCurl, 1.0);
+      g.addCurl(f, FingerCurl.HalfCurl, 0.5);
+    }
+  }
+  return g;
+}
+const COUNT_BY_NAME: Record<string, number> = {
+  FIST: 0, ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5,
+};
+const COUNT_ESTIMATOR = new GestureEstimator([
+  makeCountGesture('FIST', []),
+  makeCountGesture('ONE', [Finger.Index]),
+  makeCountGesture('TWO', [Finger.Index, Finger.Middle]),
+  makeCountGesture('THREE', [Finger.Index, Finger.Middle, Finger.Ring]),
+  makeCountGesture('FOUR', [Finger.Index, Finger.Middle, Finger.Ring, Finger.Pinky]),
+  makeCountGesture('FIVE', ALL_FINGERS),
+]);
+const FP_SCORE_THRESHOLD = 7.5;
+
+// 谷歌预训练手势兜底映射（fingerpose 无匹配时）
 const GESTURE_TO_FINGERS: Record<string, number> = {
   Closed_Fist: 0,
   Point_Up: 1,
@@ -54,11 +91,6 @@ const GESTURE_TO_FINGERS: Record<string, number> = {
   None: -1,
 };
 const fingerCountOf = (g: string) => GESTURE_TO_FINGERS[g] ?? -1;
-const GESTURE_CN: Record<string, string> = {
-  Closed_Fist: '✊握拳', Point_Up: '☝食指', Victory: '✌剪刀',
-  ILoveYou: '🤘ROCK', Thumb_Up: '👍点赞', Thumb_Down: '👎点赞',
-  Open_Palm: '👋摊掌', None: '…',
-};
 
 // ─── 测距参数（几何法，与手势无关） ────────────────
 const PALM_CM = 9.0;    // 手腕横纹→中指根典型掌长
@@ -84,11 +116,11 @@ const HAND_CONNECTIONS: [number, number][] = [
 
 type WLM = { x: number; y: number; z: number };
 
-// ─── 单手状态机：手势时序投票 + 掌心/测距平滑 ────────
+// ─── 单手状态机：手指数时序投票 + 掌心/测距平滑 ──────
 class HandState {
-  private candGesture = 'None';
+  private candCount = -1;
   private candFrames = 0;
-  private stableGesture = 'None';
+  private stableCount = -1;
   private sx = 0.5; private sy = 0.5;
   private sd = 0.5;
   private seen = false;
@@ -96,15 +128,15 @@ class HandState {
   // 自动量程校准：记住本只手实际可达的最近/最远距离，拉伸为满档 0~1（无盲区）
   private minCm = 0; private maxCm = 0; private cal = false;
 
-  /** 输入本帧手势名+landmarks，输出稳定手势/掌心/距离(cm) */
-  update(gesture: string, norm: WLM[], nowMs: number): {
-    gesture: string; fingerCount: number; x: number; y: number; distance: number; distCm: number; normSm: WLM[];
+  /** 输入本帧原始手指数（-1=未识别）+landmarks，输出稳定手指数/掌心/距离(cm) */
+  update(rawCount: number, norm: WLM[], nowMs: number): {
+    count: number; x: number; y: number; distance: number; distCm: number; normSm: WLM[];
   } {
-    // 手势时序投票
-    if (gesture === this.candGesture) this.candFrames++;
-    else { this.candGesture = gesture; this.candFrames = 1; }
-    if (this.candFrames >= GESTURE_STABLE_FRAMES || this.stableGesture === 'None') {
-      this.stableGesture = gesture;
+    // 手指数时序投票
+    if (rawCount === this.candCount) this.candFrames++;
+    else { this.candCount = rawCount; this.candFrames = 1; }
+    if (this.candFrames >= GESTURE_STABLE_FRAMES || this.stableCount === -1) {
+      this.stableCount = rawCount;
     }
 
     // 关键点 EMA 平滑（骨骼绘制与掌心共用）
@@ -144,8 +176,7 @@ class HandState {
 
     this.seen = true;
     return {
-      gesture: this.stableGesture,
-      fingerCount: fingerCountOf(this.stableGesture),
+      count: this.stableCount,
       x: this.sx, y: this.sy, distance: this.sd, distCm,
       normSm: nm,
     };
@@ -243,35 +274,35 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
       const R = analyze(HandRole.RIGHT, rightIdx, result, states.current.R, now);
       const left = L.hand, right = R.hand;
 
-      // LIVE 骨骼可视化
+      // LIVE 骨骼可视化（纯骨架，标签移到面板顶部两角）
       const sctx = skelCanvasRef.current?.getContext('2d');
       if (sctx) {
-        const hands: { norm: WLM[]; isRight: boolean; label: string }[] = [];
-        if (L.normSm) hands.push({ norm: L.normSm, isRight: false, label: `左 ${GESTURE_CN[L.gesture] ?? L.gesture}` });
-        if (R.normSm) hands.push({ norm: R.normSm, isRight: true,  label: `右 ${GESTURE_CN[R.gesture] ?? R.gesture}` });
+        const hands: { norm: WLM[]; isRight: boolean }[] = [];
+        if (L.normSm) hands.push({ norm: L.normSm, isRight: false });
+        if (R.normSm) hands.push({ norm: R.normSm, isRight: true });
         drawHandSkeleton(sctx, hands);
       }
       if (DEBUG_PANEL) {
         setDbg5({
-          l: left.detected  ? `${GESTURE_CN[L.gesture] ?? L.gesture} ${left.distCm ? (left.distCm|0) : '?'}cm` : '—',
-          r: right.detected ? `${GESTURE_CN[R.gesture] ?? R.gesture} ${right.distCm ? (right.distCm|0) : '?'}cm` : '—',
+          l: left.detected  ? `${left.fingerCount >= 0 ? left.fingerCount + '指' : '…'} ${left.distCm ? (left.distCm|0) : '?'}cm` : '—',
+          r: right.detected ? `${right.fingerCount >= 0 ? right.fingerCount + '指' : '…'} ${right.distCm ? (right.distCm|0) : '?'}cm` : '—',
         });
       }
 
       // ── 派生参数（单手接管模式） ──────────────────
-      // 只伸出一只手时，这只手控制全部（手势=剑数+阵式，距离=大小+速度）；
-      // 两只手都在时才分左右职能。锁定仅双手模式下左手 ✊ 触发
-      //（单手模式 ✊ = 千丝绞杀，不锁参数）。
+      // 只伸出一只手时，这只手控制全部（手指数=剑数+阵式，距离=大小+速度）；
+      // 两只手都在时才分左右职能。锁定仅双手模式下左手 0 指（握拳）触发
+      //（单手模式 0 指 = 千丝绞杀，不锁参数）。
       const onlyLeft = left.detected && !right.detected;
       const onlyRight = right.detected && !left.detected;
 
       // 右职能（阵式/大小/光标）来源：右手；仅左手时由左手接管
       const fHand = right.detected ? right : (onlyLeft ? left : right);
-      const fGesture = right.detected ? R.gesture : (onlyLeft ? L.gesture : 'None');
+      const fCount = right.detected ? R.count : (onlyLeft ? L.count : -1);
       // 左职能（剑数/速度）来源：左手；仅右手时由右手接管
       const cHand = left.detected ? left : (onlyRight ? right : left);
 
-      const locked = left.detected && right.detected && L.gesture === 'Closed_Fist';
+      const locked = left.detected && right.detected && L.count === 0;
       stableRef.current.locked = locked;
 
       if (!locked && fHand.detected) {
@@ -291,11 +322,11 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
       }
       stableRef.current.speed = smoothSpeed.current.v;
 
-      // 阵式手势（None 保持上一阵，避免闪跳；单手模式同样适用）
-      if (fHand.detected && fGesture !== 'None') lastRGesture.current = fGesture;
-      const formation = fHand.detected && fGesture !== 'None'
-        ? pickFormation(fGesture)
-        : (fHand.detected ? pickFormation(lastRGesture.current) : FormationState.IDLE);
+      // 阵式：未识别(-1)保持上一阵，避免闪跳
+      if (fHand.detected && fCount >= 0) lastRGesture.current = String(fCount);
+      const formation = fHand.detected && fCount >= 0
+        ? pickFormation(fCount)
+        : (fHand.detected ? pickFormation(Number(lastRGesture.current)) : FormationState.IDLE);
 
       onUpdate({
         left, right,
@@ -446,16 +477,15 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
         )}
         {status === 'active' && (
           <>
-            <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_#10b981]" />
-            <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-emerald-500/20 border border-emerald-400/40 rounded text-[9px] text-emerald-300/90 tracking-widest font-bold">
-              LIVE
+            {/* 顶部标签栏：左手在左（琥珀），右手在右（翠绿），中间 LIVE */}
+            <div className="absolute top-0 left-0 right-0 flex items-center justify-between gap-1 px-2 py-1 bg-gradient-to-b from-black/85 to-transparent">
+              <span className="text-[10px] text-amber-300 font-mono font-bold whitespace-nowrap">左 {dbg.l}</span>
+              <span className="text-[9px] text-emerald-300 tracking-[0.25em] font-bold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_#10b981]" />
+                LIVE
+              </span>
+              <span className="text-[10px] text-emerald-300 font-mono font-bold whitespace-nowrap">{dbg.r} 右</span>
             </div>
-            {DEBUG_PANEL && (
-              <div className="absolute top-8 left-2 px-1.5 py-1 bg-black/70 border border-emerald-400/30 rounded space-y-0.5 font-mono">
-                <div className="text-[10px] text-amber-300/90">左 {dbg.l}</div>
-                <div className="text-[10px] text-emerald-300/90">右 {dbg.r}</div>
-              </div>
-            )}
             {cameras.length > 1 && (
               <button
                 onClick={switchCamera}
@@ -495,40 +525,50 @@ function analyze(
   result: GestureRecognizerResult,
   state: HandState,
   nowMs: number,
-): { hand: HandData; gesture: string; normSm: WLM[] | null } {
-  if (idx < 0) return { hand: blankHand(role), gesture: 'None', normSm: null };
+): { hand: HandData; count: number; normSm: WLM[] | null } {
+  if (idx < 0) return { hand: blankHand(role), count: -1, normSm: null };
   const norm = result.landmarks[idx] as WLM[];
-  if (!norm || norm.length < 21) return { hand: blankHand(role), gesture: 'None', normSm: null };
-  const top = result.gestures?.[idx]?.[0]?.categoryName ?? 'None';
-  const r = state.update(top, norm, nowMs);
+  if (!norm || norm.length < 21) return { hand: blankHand(role), count: -1, normSm: null };
+
+  // 手指数判定：fingerpose 主判（真·伸指数 0~5），谷歌预训练手势兜底
+  let raw = -1;
+  try {
+    const est = COUNT_ESTIMATOR.estimate(norm, FP_SCORE_THRESHOLD);
+    if (est.gestures.length > 0) raw = COUNT_BY_NAME[est.gestures[0].name] ?? -1;
+  } catch { /* 单帧异常忽略 */ }
+  if (raw < 0) {
+    const google = result.gestures?.[idx]?.[0]?.categoryName ?? 'None';
+    raw = fingerCountOf(google);
+  }
+
+  const r = state.update(raw, norm, nowMs);
   return {
     hand: {
       role, detected: true,
       x: r.x, y: r.y, distance: r.distance,
-      fingerCount: r.fingerCount, distCm: r.distCm,
+      fingerCount: r.count, distCm: r.distCm,
     },
-    gesture: r.gesture,
+    count: r.count,
     normSm: r.normSm,
   };
 }
 
-function pickFormation(gesture: string): FormationState {
-  switch (gesture) {
-    case 'Closed_Fist': return FormationState.THOUSAND_SILK;  // ✊ 千丝绞杀
-    case 'Point_Up':    return FormationState.SWORD_BEAM;     // ☝ 青元剑芒
-    case 'Victory':     return FormationState.SWORD_SHADOW;   // ✌ 剑影分光术
-    case 'ILoveYou':    return FormationState.SWORD_SHIELD;   // 🤘 青元剑盾
-    case 'Thumb_Up':
-    case 'Thumb_Down':  return FormationState.TONGTIAN_ARRAY; // 👍 通天剑阵
-    case 'Open_Palm':   return FormationState.DAGENG_ARRAY;   // 👋 大庚剑阵
-    default:            return FormationState.IDLE;
+function pickFormation(count: number): FormationState {
+  switch (count) {
+    case 0: return FormationState.THOUSAND_SILK;  // ✊ 千丝绞杀
+    case 1: return FormationState.SWORD_BEAM;     // 1 指 青元剑芒
+    case 2: return FormationState.SWORD_SHADOW;   // 2 指 剑影分光术
+    case 3: return FormationState.SWORD_SHIELD;   // 3 指 青元剑盾
+    case 4: return FormationState.TONGTIAN_ARRAY; // 4 指 通天剑阵
+    case 5: return FormationState.DAGENG_ARRAY;   // 5 指 大庚剑阵
+    default: return FormationState.IDLE;
   }
 }
 
-/** LIVE 骨骼绘制：21 点官方拓扑 + 手势名标签 */
+/** LIVE 骨骼绘制：21 点官方拓扑（标签显示在面板顶部两角，不在骨架上） */
 function drawHandSkeleton(
   ctx: CanvasRenderingContext2D,
-  hands: { norm: WLM[]; isRight: boolean; label: string }[],
+  hands: { norm: WLM[]; isRight: boolean }[],
 ) {
   const w = ctx.canvas.width, h = ctx.canvas.height;
   ctx.clearRect(0, 0, w, h);
@@ -548,10 +588,6 @@ function drawHandSkeleton(
       ctx.beginPath(); ctx.arc(p.x, p.y, i === 0 ? 7 : 4, 0, Math.PI * 2);
       ctx.fillStyle = col; ctx.globalAlpha = 0.95; ctx.fill();
     }
-    const wrist = px(hand.norm[0]);
-    ctx.globalAlpha = 1; ctx.fillStyle = col;
-    ctx.font = 'bold 24px sans-serif';
-    ctx.fillText(hand.label, wrist.x + 12, wrist.y + 8);
     ctx.restore();
   }
 }

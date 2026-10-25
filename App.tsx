@@ -248,10 +248,10 @@ const App: any = () => {
           </div>
           <div className="space-y-1.5 text-[11px] leading-relaxed text-slate-300/80">
             <LegendRow>单手模式：一只手控全部</LegendRow>
-            <LegendRow>☝✌🤘👍👋 → 剑数 9/12/24/36/72 + 对应阵式</LegendRow>
+            <LegendRow>1~5 指 → 剑数 9/12/24/36/72 + 对应阵式</LegendRow>
             <LegendRow>手远近 → 剑体大小 + 速度4档（自动量程）</LegendRow>
             <LegendRow>双手模式：右手阵式/大小 左手剑数/速度</LegendRow>
-            <LegendRow>双手时左手 ✊ → 冻结参数</LegendRow>
+            <LegendRow>双手时左手握拳（0 指）→ 冻结参数</LegendRow>
           </div>
         </div>
       </div>
