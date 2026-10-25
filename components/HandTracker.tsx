@@ -159,7 +159,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
   const dbgRef = useRef({ t: 0 });
 
   // 派生稳定状态
-  const stableRef = useRef({ scale: 15, count: 128, speed: 0.75, locked: false });
+  const stableRef = useRef({ scale: 15, count: 72, speed: 0.75, locked: false });
   const smoothScale = useRef({ v: 15 });
   const smoothSpeed = useRef({ v: 0.75 });
   const states = useRef({ L: new HandState(), R: new HandState() });

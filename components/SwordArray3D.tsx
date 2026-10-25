@@ -38,7 +38,8 @@ interface SwordArray3DProps {
 }
 
 // ─── 常量 ─────────────────────────────────────────
-const MAX_SWORDS   = 512;
+const MAX_SWORDS   = 3600;      // 万剑剑丝（原著剑影分光之极）
+const BOIDS_MAX    = 512;       // Boids 群体智能上限（O(n²)，超限转参数化游弋）
 const WORLD_W      = 2800;
 const WORLD_H      = 2000;
 const BLOOM_BASE   = 1.15;      // v1.0 浓辉光回归
@@ -537,6 +538,18 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
         switch (liveFormation) {
           // ── 御剑巡空：Boids 群体智能（v1.0 五簇三力） ──
           case FormationState.IDLE: {
+            if (liveCount > BOIDS_MAX) {
+              // 大群模式：Boids O(n²) 不可行，转参数化星域游弋（走 PD 物理）
+              const R = 620 + Math.sqrt(liveCount) * 26;
+              const a = time * (0.20 + seed * 0.35) + seed * TAU + pt.offset;
+              const r = R * (0.30 + 0.70 * fract(seed * 7.31));
+              t1.set(
+                cx + Math.cos(a) * r,
+                cy + Math.sin(a * 0.9 + seed * 5.0) * r * 0.7,
+                cz + Math.sin(a * 0.7 + seed * 3.0) * 300,
+              );
+              break;
+            }
             const NUM_CLUSTERS = 5;
             const per = Math.ceil(liveCount / NUM_CLUSTERS);
             const cIdx = Math.floor(i / per);
@@ -699,7 +712,8 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
         }
 
         // ── 非_boids 物理：非线性 PD + 速度预测 + 有机摆动（v1.0） ──
-        if (liveFormation !== FormationState.IDLE) {
+        // （IDLE 小群走 Boids 自积分；IDLE 大群参数化目标也要 PD 跟随）
+        if (liveFormation !== FormationState.IDLE || liveCount > BOIDS_MAX) {
           t1.z += zPush;
           const frontRatio = ratio;
           const predict = Math.max(0, 0.5 - frontRatio * 0.5) * 0.15;
@@ -746,6 +760,8 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
         attrVel.setXYZ(i, pt.vel.x, pt.vel.y, pt.vel.z);
 
         // 虚实透明度平滑过渡
+        // 群体亮度自适应：剑越多单剑越淡（总量守恒，3600 剑也不白屏）
+        targetAlpha *= Math.min(1, BOIDS_MAX / liveCount);
         alphaArr[i] += (targetAlpha - alphaArr[i]) * 0.1;
 
         swordPosBuf[i*3] = pt.pos.x; swordPosBuf[i*3+1] = pt.pos.y; swordPosBuf[i*3+2] = pt.pos.z;
