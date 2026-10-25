@@ -84,6 +84,8 @@ export interface InteractionData {
   swordScale: number;
   swordCount: number;
   animSpeed: number;
+  /** 速度目标档位 0~3（识别层直出，UI 显示用；animSpeed 为平滑值） */
+  speedTier: number;
   locked: boolean;
 }
 

@@ -68,11 +68,7 @@ const App: any = () => {
   const formation     = interact.formation;
   const meta          = FORMATION_META[formation as FormationState];
   const scalePct      = ((scale - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)) * 100;
-  const speedLevel    = (() => {
-    let best = 0, bd = Infinity;
-    SPEED_LEVELS.forEach((s, i) => { const d = Math.abs(s.value - speed); if (d < bd) { bd = d; best = i; } });
-    return best;
-  })();
+  const speedLevel    = Math.max(0, Math.min(SPEED_LEVELS.length - 1, interact.speedTier ?? 2)); // 识别层目标档位直出
   const speedMeta     = SPEED_LEVELS[speedLevel];
   const leftDetected  = interact.left.detected;
   const rightDetected = interact.right.detected;

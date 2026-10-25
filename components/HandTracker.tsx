@@ -214,9 +214,9 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
   const dbgRef = useRef({ t: 0 });
 
   // 派生稳定状态
-  const stableRef = useRef({ scale: 15, count: 72, speed: 0.75, locked: false });
+  const stableRef = useRef({ scale: 15, count: 72, speed: 1.0, speedTier: 2, locked: false });
   const smoothScale = useRef({ v: 15 });
-  const smoothSpeed = useRef({ v: 0.75 });
+  const smoothSpeed = useRef({ v: 1.0 });
   const states = useRef({ L: new HandState(), R: new HandState() });
   const lastRGesture = useRef<string>('None');
 
@@ -257,6 +257,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
           swordScale: stableRef.current.scale,
           swordCount: stableRef.current.count,
           animSpeed:  stableRef.current.speed,
+          speedTier:  stableRef.current.speedTier,
           locked:     stableRef.current.locked,
         });
         return;
@@ -319,6 +320,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
       if (!locked && cHand.detected) {
         const level = Math.max(0, Math.min(SPEED_LEVELS.length - 1, Math.round(cHand.distance * (SPEED_LEVELS.length - 1))));
         const target = SPEED_LEVELS[level].value;
+        stableRef.current.speedTier = level;           // 目标档位直出（UI 显示用）
         smoothSpeed.current.v = smoothSpeed.current.v * (1 - SPEED_SMOOTH) + target * SPEED_SMOOTH;
       }
       stableRef.current.speed = smoothSpeed.current.v;
@@ -338,6 +340,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
         swordScale: stableRef.current.scale,
         swordCount: stableRef.current.count,
         animSpeed:  stableRef.current.speed,
+        speedTier:  stableRef.current.speedTier,
         locked,
       });
     };
