@@ -53,7 +53,10 @@ export interface HandData {
   detected: boolean;
   x: number;
   y: number;
+  /** 距离档位 0~1（0=远 FAR_CM，1=近 NEAR_CM；v4.2 起为绝对测距，无需标定） */
   distance: number;
+  /** 离摄像头真实距离(cm)，绝对测距读数（调试/手感校准用） */
+  distCm?: number;
   fingerCount: number;
 }
 
