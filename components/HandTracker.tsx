@@ -1,17 +1,14 @@
 /**
  * HandTracker — MediaPipe Tasks Vision 手势识别
- * @version 3.0 重写版
+ * @version 4.0 阵式重制
  * @description
- *   彻底废弃 v1.0/v2.0 的 MediaPipe Hands 旧 API（CDN + Hands 类），
- *   改用 Google 官方推荐的 **Tasks Vision** 全新 API（v0.10+）。
- *   优势：
- *   - 本地化运行，不依赖 CDN（无网络问题）
- *   - 自带 WASM 加速
- *   - 官方持续维护
+ *   采用 MediaPipe Tasks Vision API（v0.10+），本地 WASM 加速。
  *
  *   左右手分工（与 v2.0 一致）：
- *     左手 → 飞剑数量（8/16/32/64/128）、剑光速度（5 档）、锁定
- *     右手 → 剑阵招式（6 种）、剑体大小（5~30）、光标定位
+ *     左手 → 飞剑数量（32/64/128/256/512）、剑光速度（5 档）、锁定
+ *     右手 → 剑阵招式（v4.0 七式，全部为动漫真实剑招）、剑体大小（5~30）、光标定位
+ *       握拳 → 千丝绞杀 / 1 指 → 青元剑芒 / 2 指 → 剑影分光术
+ *       3 指 → 青元剑盾 / 4 指 → 剑丝流光 / 5 指 → 大庚剑阵
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -390,11 +387,12 @@ function buildHandData(
 function pickFormation(right: HandData): FormationState {
   if (!right.detected) return FormationState.IDLE;
   const c = right.fingerCount;
-  if (c <= 1) return FormationState.FIST;          // 握拳 → 剑丸归元
-  if (c === 2) return FormationState.ONE_FINGER;  // 青元剑河
-  if (c === 3) return FormationState.TWO_FINGER;  // 巨剑术
-  if (c === 4) return FormationState.THREE_FINGER;// 剑影分光术
-  return FormationState.FIVE_FINGER;              // 5 指 → 大庚剑阵
+  if (c === 0) return FormationState.THOUSAND_SILK; // 握拳 → 千丝绞杀
+  if (c === 1) return FormationState.SWORD_BEAM;    // 1 指 → 青元剑芒
+  if (c === 2) return FormationState.SWORD_SHADOW;  // 2 指 → 剑影分光术
+  if (c === 3) return FormationState.SWORD_SHIELD;  // 3 指 → 青元剑盾
+  if (c === 4) return FormationState.SWORD_SILK;    // 4 指 → 剑丝流光
+  return FormationState.DAGENG_ARRAY;               // 5 指 → 大庚剑阵
 }
 
 export default HandTracker;

@@ -204,7 +204,9 @@ const App: any = () => {
             <LegendRow>左手 1~5 指 → 剑数 32/64/128/256/512</LegendRow>
             <LegendRow>左手握拳 → 冻结参数</LegendRow>
             <LegendRow>左手距离 → 剑速 5 档</LegendRow>
-            <LegendRow>右手 0~5 指 → 剑阵招式</LegendRow>
+            <LegendRow>右手握拳 → 千丝绞杀</LegendRow>
+            <LegendRow>右手 1/2/3 指 → 青元剑芒/剑影分光/青元剑盾</LegendRow>
+            <LegendRow>右手 4/5 指 → 剑丝流光/大庚剑阵</LegendRow>
             <LegendRow>右手距离 → 剑体大小 5~30</LegendRow>
             <LegendRow>右手位置 → 群剑追随</LegendRow>
           </div>

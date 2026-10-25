@@ -19,23 +19,23 @@ export enum HandRole {
 
 // ─── 阵式状态 ───────────────────────────────────────
 /**
- * 剑阵阵式（右手手势驱动）
- *  - FIST         : 握拳 → 剑丸归元
- *  - ONE_FINGER   : 1 指 → 青元剑河
- *  - TWO_FINGER   : 2 指 → 巨剑术
- *  - THREE_FINGER : 3 指 → 剑影分光术
- *  - FOUR_FINGER  : 4 指 → 庚金盾幕
- *  - FIVE_FINGER  : 5 指 → 大庚剑阵
- *  - IDLE         : 无手势/无右手 → 剑意感知
+ * 剑阵阵式（右手手势驱动）—— v4.0 全部换用动漫中真实出现的韩立剑招
+ *  - THOUSAND_SILK : 握拳 → 千丝绞杀（vs 阴罗宗四长老名场面：金丝织茧层层收紧）
+ *  - SWORD_BEAM    : 1 指 → 青元剑芒（筑基期标志剑光，一线剑光流）
+ *  - SWORD_SHADOW  : 2 指 → 剑影分光术（飞剑分影名场面，一实多虚）
+ *  - SWORD_SHIELD  : 3 指 → 青元剑盾（青元剑诀护体剑盾神通）
+ *  - SWORD_SILK    : 4 指 → 剑丝流光（剑光分化成丝，丝带缠绕流淌）
+ *  - DAGENG_ARRAY  : 5 指 → 大庚剑阵（元婴至高神通，万剑齐发放射剑球）
+ *  - IDLE          : 无手势/无右手 → 御剑巡空（御剑飞行，剑群自由游弋）
  */
 export enum FormationState {
-  IDLE         = 'IDLE',
-  FIST         = 'FIST',         // 剑丸归元
-  ONE_FINGER   = 'ONE_FINGER',   // 青元剑河
-  TWO_FINGER   = 'TWO_FINGER',   // 巨剑术
-  THREE_FINGER = 'THREE_FINGER', // 剑影分光术
-  FOUR_FINGER  = 'FOUR_FINGER',  // 庚金盾幕
-  FIVE_FINGER  = 'FIVE_FINGER',  // 大庚剑阵
+  IDLE          = 'IDLE',
+  THOUSAND_SILK = 'THOUSAND_SILK', // 千丝绞杀（握拳）
+  SWORD_BEAM    = 'SWORD_BEAM',    // 青元剑芒（1 指）
+  SWORD_SHADOW  = 'SWORD_SHADOW',  // 剑影分光术（2 指）
+  SWORD_SHIELD  = 'SWORD_SHIELD',  // 青元剑盾（3 指）
+  SWORD_SILK    = 'SWORD_SILK',    // 剑丝流光（4 指）
+  DAGENG_ARRAY  = 'DAGENG_ARRAY',  // 大庚剑阵（5 指）
 }
 
 // ─── 单手状态 ───────────────────────────────────────
@@ -67,7 +67,7 @@ export interface HandData {
  * @property cursorActive       右手是否激活
  * @property formation          当前阵式（右手手势决定）
  * @property swordScale         剑体大小（右手距离驱动，5~30）
- * @property swordCount         飞剑数量（左手指数量化，8/16/32/64/128）
+ * @property swordCount         飞剑数量（左手指数量化，32~512）
  * @property animSpeed          动画速度（左手距离驱动，0.25/0.5/0.75/1.0/1.75）
  * @property locked             左手握拳 = 锁定数量/速度/大小三参数
  */
@@ -104,66 +104,66 @@ export interface FormationMeta {
 export const FORMATION_META: Record<FormationState, FormationMeta> = {
   [FormationState.IDLE]: {
     id: FormationState.IDLE,
-    name: '剑意感知',
+    name: '御剑巡空',
     trigger: '无手势',
-    description: '飞剑自由穿梭于虚空，不随手动而散',
+    description: '御剑飞行：飞剑自由巡弋于虚空，不随手动而散',
     uiColor: 'text-cyan-300',
     uiColorHex: '#67e8f9',
     shaderId: 0,
   },
-  [FormationState.FIST]: {
-    id: FormationState.FIST,
-    name: '剑丸归元',
+  [FormationState.THOUSAND_SILK]: {
+    id: FormationState.THOUSAND_SILK,
+    name: '千丝绞杀',
     trigger: '右手握拳',
-    description: '群剑螺旋收敛，凝为旋转不休的剑丸',
-    uiColor: 'text-emerald-200',
-    uiColorHex: '#a7f3d0',
-    shaderId: 7,
-  },
-  [FormationState.ONE_FINGER]: {
-    id: FormationState.ONE_FINGER,
-    name: '青元剑河',
-    trigger: '右手 1 指',
-    description: '群剑化龙，蜿蜒游弋，龙头追随手部',
-    uiColor: 'text-emerald-300',
-    uiColorHex: '#6ee7b7',
-    shaderId: 1,
-  },
-  [FormationState.TWO_FINGER]: {
-    id: FormationState.TWO_FINGER,
-    name: '巨剑术',
-    trigger: '右手 2 指',
-    description: '万剑归一，凝聚为一柄缓缓摇曳的巨剑',
-    uiColor: 'text-teal-300',
-    uiColorHex: '#5eead4',
-    shaderId: 2,
-  },
-  [FormationState.THREE_FINGER]: {
-    id: FormationState.THREE_FINGER,
-    name: '剑影分光术',
-    trigger: '右手 3 指',
-    description: '一实三虚四道剑光，扇形铺陈，虚实相生',
-    uiColor: 'text-green-300',
-    uiColorHex: '#86efac',
-    shaderId: 3,
-  },
-  [FormationState.FOUR_FINGER]: {
-    id: FormationState.FOUR_FINGER,
-    name: '庚金盾幕',
-    trigger: '右手 4 指',
-    description: '三层同心剑盾，反向旋转化解万法',
-    uiColor: 'text-lime-300',
-    uiColorHex: '#bef264',
-    shaderId: 4,
-  },
-  [FormationState.FIVE_FINGER]: {
-    id: FormationState.FIVE_FINGER,
-    name: '大庚剑阵',
-    trigger: '右手 5 指（摊掌）',
-    description: '万剑归宗：群剑结成放射剑球，缓缓自转',
+    description: '剑光分化千丝金线，织茧缠敌层层收紧（vs 阴罗宗四长老名场面）',
     uiColor: 'text-amber-300',
     uiColorHex: '#fcd34d',
+    shaderId: 1,
+  },
+  [FormationState.SWORD_BEAM]: {
+    id: FormationState.SWORD_BEAM,
+    name: '青元剑芒',
+    trigger: '右手 1 指',
+    description: '筑基期标志剑光：群剑凝成一线剑芒，随手疾射',
+    uiColor: 'text-emerald-300',
+    uiColorHex: '#6ee7b7',
+    shaderId: 2,
+  },
+  [FormationState.SWORD_SHADOW]: {
+    id: FormationState.SWORD_SHADOW,
+    name: '剑影分光术',
+    trigger: '右手 2 指',
+    description: '一实多虚剑影扇面铺陈，虚实相生（飞剑分影名场面）',
+    uiColor: 'text-teal-300',
+    uiColorHex: '#5eead4',
+    shaderId: 3,
+  },
+  [FormationState.SWORD_SHIELD]: {
+    id: FormationState.SWORD_SHIELD,
+    name: '青元剑盾',
+    trigger: '右手 3 指',
+    description: '青元剑诀护体神通：剑光成栅，结盾御敌',
+    uiColor: 'text-emerald-200',
+    uiColorHex: '#a7f3d0',
+    shaderId: 4,
+  },
+  [FormationState.SWORD_SILK]: {
+    id: FormationState.SWORD_SILK,
+    name: '剑丝流光',
+    trigger: '右手 4 指',
+    description: '剑光分化成丝，七条丝带缠绕流淌，绵绵不绝',
+    uiColor: 'text-green-300',
+    uiColorHex: '#86efac',
     shaderId: 5,
+  },
+  [FormationState.DAGENG_ARRAY]: {
+    id: FormationState.DAGENG_ARRAY,
+    name: '大庚剑阵',
+    trigger: '右手 5 指（摊掌）',
+    description: '元婴至高神通：万剑齐发结成放射剑球，金丝环绕缓缓自转',
+    uiColor: 'text-amber-300',
+    uiColorHex: '#fcd34d',
+    shaderId: 6,
   },
 };
 

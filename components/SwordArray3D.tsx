@@ -1,24 +1,18 @@
 /**
  * SwordArray3D — 3D 剑阵渲染核心
- * @version 3.0 视觉重制（对标「万剑归宗」参考效果）
+ * @version 4.0 招式重制（全部换用动漫中真实存在的韩立剑招）
  * @description
- *   v3.0 渲染架构：辉光剑影 billboard
- *   - 每把飞剑 = 1 个实例化四边形（2 三角形），片元着色器程序化绘制
- *     「剑身 + 护手 + 剑柄 + 辉光」的发光剑形，绿底金斑（青竹蜂云剑）
- *   - 上限 512 把（v2.0 为 200），billboard 成本极低，数量拉满仍满帧
- *   - 屏幕空间朝向：剑刃指向运动方向 / 径向 / 切向（按阵式），静止时保持
- *   - 速度拉伸：高速时剑身沿运动方向拉长成流光（剑河/剑群拖尾感）
- *   - 深蓝紫渐变星穹背景 + 星野，替代 v2.0 纯黑背景
- *   - Bloom 随剑数自适应，防止高数量过曝
+ *   渲染架构沿用 v3.0：辉光剑影 billboard（512 剑满帧、屏幕空间朝向、
+ *   速度拉伸流光、星穹背景、Bloom 自适应）。
  *
- *   七种阵式空间行为（v3.0）：
- *   - IDLE 剑意感知：群剑在大体积星域自由游弋
- *   - FIST 剑丸归元：斐波那契球漩涡，剑刃切向，凝为旋转剑丸
- *   - ONE_FINGER 青元剑河：群剑化河，蜿蜒流淌，龙头追手，流光拖尾
- *   - TWO_FINGER 巨剑术：万剑归一，凝为一柄缓缓摇曳的巨剑轮廓
- *   - THREE_FINGER 剑影分光术：一实三虚四道剑流，扇形循环喷射
- *   - FOUR_FINGER 庚金盾幕：三层同心剑环反向旋转
- *   - FIVE_FINGER 大庚剑阵（万剑归宗）：放射状中空剑球，缓慢自转
+ *   七式招数（v4.0，均有动漫出处）：
+ *   - IDLE 御剑巡空：群剑在大体积星域自由游弋（御剑飞行）
+ *   - THOUSAND_SILK 千丝绞杀：金丝织茧缠敌，层层收紧（vs 阴罗宗四长老名场面）
+ *   - SWORD_BEAM 青元剑芒：一线剑光流随手疾射（筑基期标志剑光）
+ *   - SWORD_SHADOW 剑影分光术：一实四虚五道剑影扇面（飞剑分影名场面）
+ *   - SWORD_SHIELD 青元剑盾：剑光成栅结盾，微摆御敌（护体剑盾神通）
+ *   - SWORD_SILK 剑丝流光：七条丝带缠绕流淌（剑光分化成丝）
+ *   - DAGENG_ARRAY 大庚剑阵：万剑齐发放射剑球（元婴至高神通）
  */
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
@@ -56,25 +50,25 @@ const GOLDEN          = 2.39996323; // 黄金角（斐波那契球分布）
 
 // ─── 剑色方案（按阵式：A 暗基色 → B 亮色，高饱和防洗白，金斑由种子触发） ──
 const FORMATION_COLORS: Record<FormationState, number[]> = {
-  [FormationState.IDLE]:         [0.02, 0.38, 0.16,  0.30, 1.00, 0.45],
-  [FormationState.FIST]:         [0.06, 0.45, 0.18,  0.50, 1.00, 0.40],
-  [FormationState.ONE_FINGER]:   [0.02, 0.42, 0.15,  0.35, 1.00, 0.50],
-  [FormationState.TWO_FINGER]:   [0.02, 0.35, 0.24,  0.20, 0.90, 0.70],
-  [FormationState.THREE_FINGER]: [0.03, 0.40, 0.14,  0.40, 1.00, 0.35],
-  [FormationState.FOUR_FINGER]:  [0.08, 0.42, 0.12,  0.55, 1.00, 0.30],
-  [FormationState.FIVE_FINGER]:  [0.03, 0.36, 0.13,  0.30, 0.95, 0.30],
+  [FormationState.IDLE]:          [0.02, 0.38, 0.16,  0.30, 1.00, 0.45],
+  [FormationState.THOUSAND_SILK]: [0.30, 0.22, 0.04,  1.00, 0.82, 0.30],
+  [FormationState.SWORD_BEAM]:    [0.03, 0.48, 0.20,  0.50, 1.00, 0.65],
+  [FormationState.SWORD_SHADOW]:  [0.02, 0.40, 0.18,  0.35, 0.95, 0.60],
+  [FormationState.SWORD_SHIELD]:  [0.02, 0.34, 0.22,  0.35, 0.95, 0.75],
+  [FormationState.SWORD_SILK]:    [0.10, 0.42, 0.14,  0.60, 1.00, 0.45],
+  [FormationState.DAGENG_ARRAY]:  [0.12, 0.30, 0.08,  0.90, 0.95, 0.40],
 };
 
 // ─── 剑的屏幕空间朝向模式 ─────────────────────────
 const enum AngleMode { VELOCITY, RADIAL, TANGENT, FIXED, FLOW }
 const FORMATION_ANGLE_MODE: Record<FormationState, AngleMode> = {
-  [FormationState.IDLE]:         AngleMode.VELOCITY,
-  [FormationState.FIST]:         AngleMode.TANGENT,
-  [FormationState.ONE_FINGER]:   AngleMode.FLOW,
-  [FormationState.TWO_FINGER]:   AngleMode.FIXED,
-  [FormationState.THREE_FINGER]: AngleMode.RADIAL,
-  [FormationState.FOUR_FINGER]:  AngleMode.TANGENT,
-  [FormationState.FIVE_FINGER]:  AngleMode.RADIAL,
+  [FormationState.IDLE]:          AngleMode.VELOCITY,
+  [FormationState.THOUSAND_SILK]: AngleMode.TANGENT,
+  [FormationState.SWORD_BEAM]:    AngleMode.FLOW,
+  [FormationState.SWORD_SHADOW]:  AngleMode.RADIAL,
+  [FormationState.SWORD_SHIELD]:  AngleMode.FIXED,
+  [FormationState.SWORD_SILK]:    AngleMode.VELOCITY,
+  [FormationState.DAGENG_ARRAY]:  AngleMode.RADIAL,
 };
 
 // ─── Shader：辉光剑影 billboard 顶点 ──────────────
@@ -447,9 +441,8 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
       // 透视推近：剑越大越靠近摄像头（v3.0 减弱，防止巨大化）
       const zPush = (liveScale - SCALE_MIN) * 10;
 
-      // 巨剑术：巨剑轴摇曳角
-      const giantRot = Math.sin(time * 0.4) * 0.15;
-      const giantCos = Math.cos(giantRot), giantSin = Math.sin(giantRot);
+      // 青元剑盾：盾栅微摆角
+      const giantRot = Math.sin(time * 0.8) * 0.06;
 
       // 阵式过渡混合系数（0→1）
       const modeBlend = Math.min(1, formationTime * 1.4);
@@ -471,7 +464,7 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
         // ── 目标位置 ──────────────────────────
         let targetAlpha = 1;
         switch (liveFormation) {
-          // 剑意感知：大体积星域自由游弋
+          // 御剑巡空：大体积星域自由游弋（御剑飞行）
           case FormationState.IDLE: {
             const R = 650 + Math.sqrt(liveCount) * 55;
             const a = time * (0.22 + seed * 0.3) + seed * TAU + pt.offset;
@@ -483,100 +476,83 @@ const SwordArray3D: React.FC<SwordArray3DProps> = ({
             );
             break;
           }
-          // 剑丸归元：斐波那契球漩涡
-          case FormationState.FIST: {
-            const R = (210 + 60 * Math.sin(formationTime * 2.0)) * (0.75 + 0.5 * fract(seed * 3.7));
-            fibDir(i, liveCount, fibTmp);
-            const swirl = time * 2.2 + seed * 0.6;
-            const cs = Math.cos(swirl), sn = Math.sin(swirl);
-            const fx = fibTmp.x * cs - fibTmp.z * sn;
-            const fz = fibTmp.x * sn + fibTmp.z * cs;
-            tmpVec2.set(cx + fx * R, cy + fibTmp.y * R * 0.9, cz + fz * R);
+          // 千丝绞杀：金丝织茧缠敌，从大网层层收紧（fist = 攥紧）
+          case FormationState.THOUSAND_SILK: {
+            const tighten = 1.0 + 1.8 * Math.exp(-formationTime * 2.2);  // 切阵瞬间从大网收拢
+            const squeeze = 1.0 + 0.10 * Math.sin(formationTime * 4.0);  // 持续攥紧搏动
+            const R = (110 + 70 * fract(seed * 3.7)) * tighten * squeeze;
+            const spins = time * 2.6 + seed * TAU;                       // 每根丝高速缠绕
+            const band = Math.floor(ratio * 5);                          // 5 层丝带
+            tmpVec2.set(
+              cx + Math.cos(spins + band * 1.3) * R * (1 + band * 0.22),
+              cy + Math.sin(spins * 1.3 + band * 0.9) * R * 0.85 * (1 + band * 0.18),
+              cz + Math.sin(spins * 0.7 + seed * 6.0) * R * 0.9,
+            );
             break;
           }
-          // 青元剑河：蜿蜒流动的剑河，龙头追手
-          case FormationState.ONE_FINGER: {
+          // 青元剑芒：群剑凝成一线剑芒，随手方向疾射
+          case FormationState.SWORD_BEAM: {
             const t = (i + 0.5) / liveCount;
-            const L = 550 + liveCount * 2.6;
+            const L = 700 + liveCount * 1.6;
             const dx = tmpVec1.x, dy = tmpVec1.y;
             const perpX = -dy, perpY = dx;
-            const wob = Math.sin(t * 12.0 - time * 5.0 + seed * 3.0);
-            const width = (26 + 60 * Math.sin(t * Math.PI)) * (0.35 + fract(seed * 5.1) * 0.9);
+            const wob = Math.sin(t * 20.0 - time * 9.0 + seed * 3.0);
+            const width = (6 + 14 * Math.sin(t * Math.PI)) * (0.4 + fract(seed * 5.1) * 0.6);
             tmpVec2.set(
               cx - dx * t * L + perpX * wob * width,
               cy - dy * t * L + perpY * wob * width,
-              cz + Math.sin(t * 9.0 - time * 4.0 + seed * 6.0) * 90,
+              cz + Math.sin(t * 24.0 - time * 6.0 + seed * 6.0) * 26,
             );
             break;
           }
-          // 巨剑术：万剑凝为一柄巨剑轮廓（剑身双缘密布、护手横杆、剑柄剑首）
-          case FormationState.TWO_FINGER: {
-            const baseY = cy - 300;
-            let lx: number, ly: number; // 巨剑局部坐标（ly 向上为正）
-            const u = fract(seed * 11.7);
-            if (u < 0.60) {          // 剑身
-              const v = fract(seed * 3.7);
-              const halfW = (1 - v * 0.90) * 44 + 8;
-              if (fract(seed * 9.1) < 0.55) {
-                // 轮廓缘：沿左右刃口分布
-                const sideSign = fract(seed * 5.3) < 0.5 ? -1 : 1;
-                lx = sideSign * halfW * (0.85 + fract(seed * 7.7) * 0.15);
-              } else {
-                lx = (fract(seed * 5.3) - 0.5) * 1.3 * halfW;
-              }
-              ly = 40 + v * 940 + Math.sin(time * 2.0 + v * 18.0) * 9;
-            } else if (u < 0.80) {   // 护手（宽横杆）
-              ly = 28 + fract(seed * 2.9) * 24 + (fract(seed * 6.1) - 0.5) * 10;
-              lx = (fract(seed * 5.3) - 0.5) * 2 * 240;
-            } else if (u < 0.95) {   // 剑柄（细双缘）
-              const sideSign = fract(seed * 4.1) < 0.5 ? -1 : 1;
-              lx = sideSign * (13 + fract(seed * 2.2) * 8);
-              ly = -165 + fract(seed * 3.1) * 180;
-            } else {                 // 剑首
-              lx = (fract(seed * 5.3) - 0.5) * 2 * 54;
-              ly = -198 - fract(seed * 2.3) * 30;
-            }
-            tmpVec2.set(
-              cx + lx * giantCos - ly * giantSin,
-              baseY + lx * giantSin + ly * giantCos,
-              cz + (fract(seed * 6.7) - 0.5) * 80,
-            );
-            break;
-          }
-          // 剑影分光术：一实三虚四道剑流，扇形循环
-          case FormationState.THREE_FINGER: {
-            const lane = i % 4;
-            const baseAngle = Math.PI / 2 + (lane - 1.5) * 0.38; // 朝上扇形
-            const flow = fract(seed + time * 0.32 * (lane === 0 ? 1.0 : 0.78));
-            const r = 130 + flow * 1150;
+          // 剑影分光术：一实四虚五道剑影，扇形铺陈（动画分身名场面）
+          case FormationState.SWORD_SHADOW: {
+            const lane = i % 5;
+            const baseAngle = Math.PI / 2 + (lane - 2) * 0.30; // 朝上扇形
+            const flow = fract(seed + time * 0.34 * (lane === 2 ? 1.0 : 0.72));
+            const r = 130 + flow * 880;
             const spread = (fract(seed * 3.3) - 0.5) * (50 + flow * 100);
             const pa = baseAngle + Math.PI / 2;
             tmpVec2.set(
               cx + Math.cos(baseAngle) * r + Math.cos(pa) * spread,
               cy + Math.sin(baseAngle) * r + Math.sin(pa) * spread,
-              cz + (lane === 0 ? 110 : -90 * lane) + Math.sin(flow * 9.0 + lane) * 40,
+              cz + (lane === 2 ? 110 : (lane - 2) * 85) + Math.sin(flow * 9.0 + lane) * 40,
             );
-            targetAlpha = lane === 0 ? 1.0 : 0.5;
+            targetAlpha = lane === 2 ? 1.0 : 0.32; // 中央为实，余皆为影
             break;
           }
-          // 庚金盾幕：三层同心剑环反向旋转
-          case FormationState.FOUR_FINGER: {
-            const layer = i % 3;
-            const k = Math.floor(i / 3);
-            const layerCount = Math.max(1, Math.ceil(liveCount / 3));
-            const baseR = [340, 600, 860][layer];
-            const r = baseR + (fract(seed * 4.1) - 0.5) * 90;
-            const dir = layer === 1 ? -1 : 1;
-            const a = (k / layerCount) * TAU + time * (1.5 - layer * 0.45) * dir + seed * 0.5;
+          // 青元剑盾：剑光成栅结盾，栅格微摆御敌
+          case FormationState.SWORD_SHIELD: {
+            const cols = Math.max(3, Math.ceil(Math.sqrt(liveCount * 1.7)));
+            const row = Math.floor(i / cols);
+            const col = i % cols;
+            const rows = Math.ceil(liveCount / cols);
+            const sx = (col - (cols - 1) / 2) * 58;
+            const sy = ((rows - 1) / 2 - row) * 58;
             tmpVec2.set(
-              cx + Math.cos(a) * r,
-              cy + Math.sin(a) * r * 0.74,
-              cz + Math.sin(k * 0.7 + time * 1.2 + layer) * 80,
+              cx + sx + Math.sin(time * 2.2 + row * 0.6) * 10 * 0.4,
+              cy + sy + Math.sin(time * 2.0 + col * 0.5) * 8,
+              cz + 90 + Math.sin(row * 0.8 + col * 0.4) * 24,
             );
             break;
           }
-          // 大庚剑阵（万剑归宗）：放射状中空剑球
-          case FormationState.FIVE_FINGER: {
+          // 剑丝流光：剑光分化成丝，七条丝带缠绕流淌
+          case FormationState.SWORD_SILK: {
+            const lane = i % 7;
+            const t = fract(seed * 7.3 + time * (0.16 + lane * 0.012));
+            const ph = lane * (TAU / 7);
+            const rx = 620 + fract(seed * 3.1) * 160;
+            const ry = 300 + fract(seed * 4.7) * 110;
+            const rz = 170 + Math.sin(ph) * 60;
+            tmpVec2.set(
+              cx + Math.cos(t * TAU + ph) * rx,
+              cy + Math.sin(t * TAU * 2.0 + ph * 1.7) * ry,
+              cz + Math.sin(t * TAU + ph * 0.6) * rz,
+            );
+            break;
+          }
+          // 大庚剑阵：万剑齐发，放射状中空剑球，切阵时从远方收拢
+          case FormationState.DAGENG_ARRAY: {
             const converge = 1.0 + 1.6 * Math.exp(-formationTime * 2.6); // 切阵时从远处收拢
             const R = (300 + 60 * Math.sin(formationTime * 1.8)) * converge;
             fibDir(i, liveCount, fibTmp);
