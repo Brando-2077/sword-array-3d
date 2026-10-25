@@ -2,22 +2,22 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#010409">
     <title>大庚剑阵 · 灵动篇 — Great Geng Sword Array 3D</title>
+    <meta name="description" content="基于手势识别的沉浸式 3D 飞剑操控体验，复刻《凡人修仙传》韩立大庚剑阵">
+
+    <!-- 字体 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet">
-    
-    <!-- MediaPipe Libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+    <!-- MediaPipe Hands v3.0：使用本地 npm 包 @mediapipe/tasks-vision（已装在 node_modules） -->
 
     <style>
-        body {
-            font-family: 'Noto Serif SC', serif;
-            background-color: #010409;
-            color: #f8fafc;
-            overflow: hidden;
-            margin: 0;
-        }
+        /* 防白屏：在 JS 加载前显示基础底色 */
+        body { background-color: #010409; }
+        /* 加载占位（v2.0 重置时由 React 接管） */
     </style>
 </head>
 <body>

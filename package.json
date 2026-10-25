@@ -1,6 +1,6 @@
 {
   "name": "sword-array-3d",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "description": "基于 Three.js 和 MediaPipe 的沉浸式大庚剑阵手势模拟器 - 通过摄像头捕捉双手动作，实时操控飞剑结成剑阵",
   "keywords": [
     "three.js",
@@ -10,9 +10,8 @@
     "3d-animation",
     "react",
     "vite",
-    "gemini-ai",
     "xianxia",
-    "Interactive-experience"
+    "interactive-experience"
   ],
   "type": "module",
   "license": "MIT",
@@ -31,11 +30,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.35.0",
-    "d3": "^7.9.0",
+    "@mediapipe/tasks-vision": "^1.0.1",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
@@ -44,6 +43,9 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.1",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.160.0",
     "@vitejs/plugin-react": "^5.0.0",
     "tailwindcss": "^4.3.1",
     "typescript": "~5.8.2",

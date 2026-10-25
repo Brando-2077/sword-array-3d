@@ -128,8 +128,6 @@ Closes #123
 
 ## 🔒 安全注意
 
-- **不要提交** `.env.local` 或任何包含 API Key 的文件
-- Gemini API Key 应通过环境变量配置
 - 提交前检查 `.gitignore` 是否完整
 
 ## 📚 文档更新

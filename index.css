@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* ─── Reset & Base ─────────────────────────────── */
 * {
   margin: 0;
   padding: 0;
@@ -17,28 +18,83 @@ body {
   font-family: 'Noto Serif SC', serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-::-webkit-scrollbar {
-  width: 4px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(16, 185, 129, 0.3);
-  border-radius: 2px;
+  color: #f8fafc;
 }
 
 canvas {
   display: block;
 }
 
-/* Glass panel utility */
+/* ─── Scrollbar ───────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.3);
+  border-radius: 2px;
+}
+
+/* ─── 加载态 — 灵动感 ───────────────────────── */
+@keyframes swordPulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50%      { opacity: 1.0; transform: scale(1.05); }
+}
+
+@keyframes arraySpin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes glowFade {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1.0; }
+}
+
+.sword-pulse { animation: swordPulse 2.5s ease-in-out infinite; }
+.array-spin  { animation: arraySpin 3s linear infinite; }
+.glow-fade   { animation: glowFade 2s ease-in-out infinite; }
+
+/* ─── 玻璃面板工具类 ─────────────────────────── */
 .glass-panel {
-  background: rgba(15, 23, 42, 0.4);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(16, 185, 129, 0.1);
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(16, 185, 129, 0.12);
+}
+
+.glass-panel-strong {
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(16, 185, 129, 0.18);
+}
+
+/* ─── 文字发光（用于剑阵名） ────────────────── */
+.text-glow-emerald {
+  text-shadow: 0 0 30px rgba(110, 231, 183, 0.6), 0 0 12px rgba(110, 231, 183, 0.4);
+}
+.text-glow-amber {
+  text-shadow: 0 0 30px rgba(252, 211, 77, 0.6), 0 0 12px rgba(252, 211, 77, 0.4);
+}
+.text-glow-cyan {
+  text-shadow: 0 0 30px rgba(103, 232, 249, 0.6), 0 0 12px rgba(103, 232, 249, 0.4);
+}
+
+/* ─── 渐变标题 ───────────────────────────────── */
+.bg-gradient-sword {
+  background-image: linear-gradient(90deg, #6ee7b7 0%, #99f6e4 50%, #ffffff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ─── 选择文本禁用（UI 不应该被选中） ───────── */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ─── 防止视频被意外选中 ───────────────────── */
+video {
+  user-select: none;
+  -webkit-user-select: none;
 }
