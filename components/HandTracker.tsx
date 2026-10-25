@@ -41,6 +41,8 @@ const MODEL_REMOTE = 'https://storage.googleapis.com/mediapipe-models/gesture_re
 const WASM_BASE = '/mediapipe-wasm';
 
 // ─── 手势 → 指数 映射（官方手势名；右手查阵式，左手查数量） ──
+// ⚠️ 'None'（未识别）绝不能映射为 0/握拳——否则任何识别失败帧都会触发
+//    参数锁定，全局僵死（v6.0 失控 bug 根因）。未识别 = -1 = 不干预。
 const GESTURE_TO_FINGERS: Record<string, number> = {
   Closed_Fist: 0,
   Point_Up: 1,
@@ -49,7 +51,9 @@ const GESTURE_TO_FINGERS: Record<string, number> = {
   Thumb_Up: 4,
   Thumb_Down: 4,
   Open_Palm: 5,
+  None: -1,
 };
+const fingerCountOf = (g: string) => GESTURE_TO_FINGERS[g] ?? -1;
 const GESTURE_CN: Record<string, string> = {
   Closed_Fist: '✊握拳', Point_Up: '☝食指', Victory: '✌剪刀',
   ILoveYou: '🤘ROCK', Thumb_Up: '👍点赞', Thumb_Down: '👎点赞',
@@ -68,8 +72,8 @@ const DEBUG_PANEL = true;
 
 const VIRTUAL_CAM_RE = /droidcam|virtual|e2esoft|manycam|obs|snap camera/i;
 
-// MediaPipe 官方约定：标签按镜像输入判定，我们送原始帧 → 需对调
-const SWAP_HANDEDNESS = true;
+// MediaPipe 官方约定：标签按镜像输入判定，我们送原始帧 → 需对调。
+// 默认对调；摄像头行为不同时用面板上的「⇄ 左右互换」一键纠正（localStorage 记忆）。
 
 // ─── 21 点手骨拓扑（官方 HAND_CONNECTIONS） ─────────
 const HAND_CONNECTIONS: [number, number][] = [
@@ -128,7 +132,7 @@ class HandState {
     this.seen = true;
     return {
       gesture: this.stableGesture,
-      fingerCount: GESTURE_TO_FINGERS[this.stableGesture] ?? 0,
+      fingerCount: fingerCountOf(this.stableGesture),
       x: this.sx, y: this.sy, distance: this.sd, distCm,
       normSm: nm,
     };
@@ -157,6 +161,12 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
   // 调试读数（5Hz）
   const [dbg, setDbg] = useState<{ l: string; r: string }>({ l: '', r: '' });
   const dbgRef = useRef({ t: 0 });
+
+  // 左右手判定方向（可一键互换，localStorage 记忆）
+  const [swapHands, setSwapHands] = useState<boolean>(() => {
+    try { return localStorage.getItem('dageng-swap-hands') !== '0'; } catch { return true; }
+  });
+  const swapRef = useRef(swapHands);
 
   // 派生稳定状态
   const stableRef = useRef({ scale: 15, count: 72, speed: 0.75, locked: false });
@@ -211,7 +221,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
       let leftIdx = -1, rightIdx = -1;
       for (let i = 0; i < nHands; i++) {
         const label = result.handedness?.[i]?.[0]?.categoryName || result.handedness?.[i]?.[0]?.displayName;
-        const isUserRight = SWAP_HANDEDNESS ? label === 'Left' : label === 'Right';
+        const isUserRight = swapRef.current ? label === 'Left' : label === 'Right';
         if (isUserRight && rightIdx < 0) rightIdx = i;
         else if (!isUserRight && leftIdx < 0) leftIdx = i;
       }
@@ -236,7 +246,8 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
       }
 
       // ── 派生参数 ──
-      const locked = left.detected && left.fingerCount === 0; // ✊ 冻结
+      // 锁定只在"明确识别出握拳"时触发；识别失败(None=-1)绝不锁死参数
+      const locked = left.detected && L.gesture === 'Closed_Fist';
       stableRef.current.locked = locked;
 
       if (!locked && right.detected) {
@@ -430,6 +441,18 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onUpdate }) => {
                 换摄像头 {camIdx + 1}/{cameras.length}
               </button>
             )}
+            <button
+              onClick={() => setSwapHands((v) => {
+                const nv = !v;
+                swapRef.current = nv;
+                try { localStorage.setItem('dageng-swap-hands', nv ? '1' : '0'); } catch { /* noop */ }
+                return nv;
+              })}
+              title="左右手识别反了？点此互换"
+              className="absolute bottom-2 left-2 pointer-events-auto px-2 py-0.5 bg-black/60 border border-amber-400/40 rounded text-[9px] text-amber-300/90 tracking-widest font-bold hover:bg-amber-500/20 transition-colors"
+            >
+              ⇄ 左右互换
+            </button>
           </>
         )}
       </div>

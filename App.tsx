@@ -169,13 +169,13 @@ const App: any = () => {
               <HandStatus
                 label="左手"
                 detected={leftDetected}
-                extra={leftDetected ? `${interact.left.fingerCount}指` : null}
+                extra={leftDetected ? (interact.left.fingerCount > 0 ? `${interact.left.fingerCount}指` : '…') : null}
                 tone="emerald"
               />
               <HandStatus
                 label="右手"
                 detected={rightDetected}
-                extra={rightDetected ? `${interact.right.fingerCount}指` : null}
+                extra={rightDetected ? (interact.right.fingerCount > 0 ? `${interact.right.fingerCount}指` : '…') : null}
                 tone="amber"
                 locked={locked}
               />
@@ -203,7 +203,7 @@ const App: any = () => {
           <div className="space-y-1.5 text-[11px] leading-relaxed text-slate-300/80">
             <LegendRow>右手 ✊千丝绞杀 ☝青元剑芒 ✌剑影分光</LegendRow>
             <LegendRow>右手 🤘青元剑盾 👍通天剑阵 👋大庚剑阵</LegendRow>
-            <LegendRow>左手 ☝✌🤘👍👋 → 剑数 12/36/72/360/3600</LegendRow>
+            <LegendRow>左手 ☝✌🤘👍👋 → 剑数 12/36/72/144/360</LegendRow>
             <LegendRow>左手 ✊ → 冻结参数；左手距离 → 剑速</LegendRow>
             <LegendRow>右手距离 → 剑体大小；右手位置 → 群剑追随</LegendRow>
           </div>
