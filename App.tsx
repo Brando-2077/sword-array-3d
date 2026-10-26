@@ -14,12 +14,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import SwordArray3D from './components/SwordArray3D';
 import HandTracker  from './components/HandTracker';
+import type { HandTrackerProps } from './components/HandTracker';
 import {
   FormationState, HandData, HandRole, InteractionData, FORMATION_META, SPEED_LEVELS,
 } from './types';
 import { Sword, Lock, Unlock, Zap, Crosshair, ChevronRight } from 'lucide-react';
 
-const App: React.FC = () => {
+const App: React.FC<{ Tracker?: React.ComponentType<HandTrackerProps> }> = ({ Tracker = HandTracker }) => {
   // 调试/演示参数：?f=FIVE_FINGER&c=512&s=18 → 固定阵式/数量/大小，跳过手势识别（用于无摄像头验证）
   const debugParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const debugPin = debugParams.get('f') !== null;
@@ -304,7 +305,7 @@ const App: React.FC = () => {
       )}
 
       {/* 手势识别（调试模式下跳过，避免摄像头权限弹窗） */}
-      {!debugPin && <HandTracker onUpdate={setInteract} />}
+      {!debugPin && <Tracker onUpdate={setInteract} />}
 
       {/* 暗角 */}
       <div className="absolute inset-0 pointer-events-none z-20"

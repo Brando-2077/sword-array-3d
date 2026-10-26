@@ -35,20 +35,21 @@ const SCALE_SMOOTH = 0.30, SPEED_SMOOTH = 0.40;
 const MODEL_DETECTOR = '/models/handdetector/model.json';
 const MODEL_LANDMARK = '/models/handlandmark/model.json';
 
-// ─── 权重加载器：从包内 .js 数据模块读取（window.__WEIGHTS_* 注入） ──
-// 模型 JSON 的 weightsManifest 里 path 指向虚拟名，IOHandler 从内存解码
-function makeMemoryIOHandler(weightsKey: string, topologyKey: string): tf.io.IOHandler {
+// ─── 权重加载器：从包内 .js 数据模块读取（model.js 注入 __MODEL_*_TOPOLOGY/__SHARDS） ──
+// 零 fetch、零网络、零 WASM——完全符合容器 CSP
+function makeMemoryIOHandler(isDetector: boolean): tf.io.IOHandler {
   return {
     async load() {
-      const store = (window as any).__WEIGHTS;
-      if (!store || !store[topologyKey]) throw new Error(`模型数据缺失: ${topologyKey}`);
-      const topology = store[topologyKey];
+      const w = window as any;
+      const topology = isDetector ? w.__MODEL_DETECTOR_TOPOLOGY : w.__MODEL_LANDMARK_TOPOLOGY;
+      const shards = isDetector ? w.__MODEL_DETECTOR_SHARDS : w.__MODEL_LANDMARK_SHARDS;
+      if (!topology || !shards) throw new Error(`模型数据缺失: ${isDetector ? 'DETECTOR' : 'LANDMARK'}`);
       const weightSpecs: tf.io.WeightsManifestEntry[] = [];
       const buffers: ArrayBuffer[] = [];
       for (const group of topology.weightsManifest ?? []) {
         for (const spec of group.weights) weightSpecs.push(spec);
         for (const path of group.paths) {
-          const b64 = store[path];
+          const b64 = shards[path];
           if (!b64) throw new Error(`权重分片缺失: ${path}`);
           const bin = atob(b64);
           const buf = new Uint8Array(bin.length);
@@ -56,16 +57,11 @@ function makeMemoryIOHandler(weightsKey: string, topologyKey: string): tf.io.IOH
           buffers.push(buf.buffer);
         }
       }
-      // 拼接所有分片为一个 weightData
       const total = buffers.reduce((n, b) => n + b.byteLength, 0);
       const merged = new Uint8Array(total);
       let off = 0;
       for (const b of buffers) { merged.set(new Uint8Array(b), off); off += b.byteLength; }
-      return {
-        modelTopology: topology.modelTopology,
-        weightSpecs,
-        weightData: merged.buffer,
-      };
+      return { modelTopology: topology.modelTopology, weightSpecs, weightData: merged.buffer };
     },
   };
 }
@@ -262,8 +258,8 @@ const HandTrackerTF: React.FC<HandTrackerProps> = ({ onUpdate }) => {
         // 模型加载（自定义 IOHandler 从包内 .js 数据模块读取）
         const detector = await createDetector(SupportedModels.MediaPipeHands, {
           runtime: 'tfjs',
-          detectorModelUrl: makeMemoryIOHandler('__WEIGHTS', '__MODEL_DETECTOR') as any,
-          landmarkModelUrl: makeMemoryIOHandler('__WEIGHTS', '__MODEL_LANDMARK') as any,
+          detectorModelUrl: makeMemoryIOHandler(true) as any,
+          landmarkModelUrl: makeMemoryIOHandler(false) as any,
           maxHands: 2,
         });
         detectorRef.current = detector;
