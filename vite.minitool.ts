@@ -1,6 +1,7 @@
 import path from 'path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // 小工具版构建配置：
 // - 经典脚本（iife，非 ES module）——容器 CSP 禁止 type="module"
@@ -9,7 +10,7 @@ import react from '@vitejs/plugin-react';
 // - publicDir 指向 minitool/public/（模型 .js 数据模块拷贝到产物根）
 // - minitool/index.html 里的 <script type="module" src="./main.tsx"> 触发 Vite 处理
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   base: './',
   publicDir: path.resolve(__dirname, 'minitool/public'),
   build: {

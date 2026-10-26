@@ -37,8 +37,9 @@ const MODEL_LANDMARK = '/models/handlandmark/model.json';
 
 // ─── 权重加载器：从包内 .js 数据模块读取（model.js 注入 __MODEL_*_TOPOLOGY/__SHARDS） ──
 // 零 fetch、零网络、零 WASM——完全符合容器 CSP
+// 附带 indexOf/toString 方法以通过 hand-pose-detection 内部的字符串检查
 function makeMemoryIOHandler(isDetector: boolean): tf.io.IOHandler {
-  return {
+  const handler: any = {
     async load() {
       const w = window as any;
       const topology = isDetector ? w.__MODEL_DETECTOR_TOPOLOGY : w.__MODEL_LANDMARK_TOPOLOGY;
@@ -64,6 +65,13 @@ function makeMemoryIOHandler(isDetector: boolean): tf.io.IOHandler {
       return { modelTopology: topology.modelTopology, weightSpecs, weightData: merged.buffer };
     },
   };
+  // 字符串兼容：hand-pose-detection 内部对 URL 做 .indexOf() 等字符串操作
+  handler.indexOf = () => -1;
+  handler.toString = () => isDetector ? 'memory://detector' : 'memory://landmark';
+  handler.charAt = () => '';
+  handler.startsWith = () => false;
+  handler.includes = () => false;
+  return handler as tf.io.IOHandler;
 }
 
 // ─── 主组件 ──────────────────────────────────────
