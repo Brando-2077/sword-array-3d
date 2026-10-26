@@ -1,5 +1,15 @@
 @import "tailwindcss";
 
+/* ─── 跨端适配（触摸/安全区/滚动） ──────────────── */
+html {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+}
+body {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* ─── Reset & Base ─────────────────────────────── */
 * {
   margin: 0;
