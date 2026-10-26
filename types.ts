@@ -1,12 +1,12 @@
 /**
  * 大庚剑阵 · 灵动篇 — 类型定义
- * @version 2.0 重置版
+ * @version 7.1
  * @description
  *   明确字段语义，加 JSDoc 注释，定义七种阵式元数据。
- *   左右手分工（最终正确版，与实现一致）：
- *     左手 → 飞剑数量（按伸出指数量化）、剑光速度（按距离 5 档）
- *     右手 → 剑阵招式（按手形 6 种）、剑体大小（按距离 5~30 连续）、光标定位
- *   锁定功能：左手握拳触发，冻结数量/速度/大小三个参数
+ *   左右手分工（与实现一致）：
+ *     左手 → 飞剑数量（按伸出指数量化 9~72）、剑光速度（按距离 4 档）
+ *     右手 → 剑阵招式（GestureRecognizer 手形 7 式）、剑体大小（按距离 10 档量化）、光标定位
+ *   锁定功能：双手在场时左手握拳触发，冻结数量/速度/大小三个参数
  */
 
 
@@ -18,13 +18,13 @@ export enum HandRole {
 
 // ─── 阵式状态 ───────────────────────────────────────
 /**
- * 剑阵阵式（右手手势驱动）—— v4.0 全部换用动漫中真实出现的韩立剑招
- *  - THOUSAND_SILK : 握拳 → 千丝绞杀（vs 阴罗宗四长老名场面：金丝织茧层层收紧）
- *  - SWORD_BEAM    : 1 指 → 青元剑芒（筑基期标志剑光，一线剑光流）
- *  - SWORD_SHADOW  : 2 指 → 剑影分光术（飞剑分影名场面，一实多虚）
- *  - SWORD_SHIELD  : 3 指 → 青元剑盾（青元剑诀护体剑盾神通）
- *  - TONGTIAN_ARRAY: 4 指 → 通天剑阵（仙界剑阵：紫金剑柱+剑雨+紫电）
- *  - DAGENG_ARRAY  : 5 指 → 大庚剑阵（元婴至高神通，万剑齐发放射剑球）
+ * 剑阵阵式（右手手势驱动，v6.0 起为 GestureRecognizer 官方手势）—— 招式均为动漫中真实出现的韩立剑招
+ *  - THOUSAND_SILK : ✊ 握拳 → 千丝绞杀（vs 阴罗宗四长老名场面：金丝织茧层层收紧）
+ *  - SWORD_BEAM    : ☝ 食指 → 青元剑芒（筑基期标志剑光，一线剑光流）
+ *  - SWORD_SHADOW  : ✌ 剪刀手 → 剑影分光术（飞剑分影名场面，一实多虚）
+ *  - SWORD_SHIELD  : 🤘 → 青元剑盾（青元剑诀护体剑盾神通）
+ *  - TONGTIAN_ARRAY: 👍 点赞 → 通天剑阵（仙界剑阵：紫金剑柱+剑雨+紫电）
+ *  - DAGENG_ARRAY  : 👋 摊掌 → 大庚剑阵（元婴至高神通，万剑齐发放射剑球）
  *  - IDLE          : 无手势/无右手 → 御剑巡空（御剑飞行，剑群自由游弋）
  */
 export enum FormationState {
@@ -68,10 +68,10 @@ export interface HandData {
  * @property cursorY            右手掌心 Y（归一化，0~1）
  * @property cursorActive       右手是否激活
  * @property formation          当前阵式（右手手势决定）
- * @property swordScale         剑体大小（右手距离驱动，5~30）
- * @property swordCount         飞剑数量（左手指数量化，32~512）
- * @property animSpeed          动画速度（左手距离驱动，0.25/0.5/0.75/1.0/1.75）
- * @property locked             左手握拳 = 锁定数量/速度/大小三参数
+ * @property swordScale         剑体大小（右手距离驱动，10 档量化 5~30）
+ * @property swordCount         飞剑数量（左手指数量化 9~72）
+ * @property animSpeed          动画速度（左手距离驱动 4 档：0.35/0.65/1.0/1.5）
+ * @property locked             双手在场时左手握拳 = 锁定数量/速度/大小三参数
  */
 export interface InteractionData {
   left: HandData;
