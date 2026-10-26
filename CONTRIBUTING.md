@@ -6,7 +6,7 @@
 
 ### 报告 Bug
 
-- 使用 [GitHub Issues](https://github.com/HanGu007/sword-array-3d/issues) 提交 Bug 报告
+- 使用 [GitHub Issues](https://github.com/Brando-2077/sword-array-3d/issues) 提交 Bug 报告
 - 请详细描述：
   - 问题描述
   - 复现步骤
@@ -16,7 +16,7 @@
 
 ### 提出新功能
 
-- 在 [GitHub Issues](https://github.com/HanGu007/sword-array-3d/issues) 中提出功能建议
+- 在 [GitHub Issues](https://github.com/Brando-2077/sword-array-3d/issues) 中提出功能建议
 - 描述清楚功能的用途和价值
 - 可以附上设计草图或参考示例
 
@@ -148,7 +148,7 @@ Closes #123
 
 ## 💬 交流社区
 
-- 有问题可以在 [GitHub Discussions](https://github.com/HanGu007/sword-array-3d/discussions) 提问
+- 有问题可以在 [GitHub Discussions](https://github.com/Brando-2077/sword-array-3d/discussions) 提问
 - 欢迎分享你的剑阵创意！
 
 ## 📄 License
